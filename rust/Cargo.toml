@@ -1,0 +1,48 @@
+[package]
+name = "liveupdate_core"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "liveupdate_core"
+crate-type = ["cdylib"]
+
+[dependencies]
+# JNI bindings for Android
+jni = "0.21"
+# QR code detection (pure Rust)
+rqrr = "0.10"
+# Image processing for cropping
+image = { version = "0.25", default-features = false, features = [
+    "png",
+] }
+# Base64 for passing image bytes over JNI as string
+base64 = "0.22"
+# JSON serialisation
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Android logging
+log = "0.4"
+android_logger = { version = "0.14", default-features = false }
+# Async runtime (minimal, for blocking JNI bridge)
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
+# HTTP client with a caller-supplied rustls provider.
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls-no-provider"] }
+# Bundled Mozilla root certificates — bypass rustls-platform-verifier on Android
+webpki-roots = "1.0.6"
+# Direct rustls dep for building a compact ClientConfig with the ring provider.
+rustls = { version = "0.23", default-features = false, features = [
+    "ring",
+    "std",
+    "tls12",
+] }
+
+[dev-dependencies]
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+
+[profile.release]
+opt-level = "z"   # optimize for size
+lto = true
+codegen-units = 1
+panic = "abort"   # required for Android, reduces binary size
+strip = true

@@ -1,0 +1,74 @@
+# SignalDock（信岛）
+
+SignalDock 是面向 HyperOS 超级岛的 Android 截图识别工具。点击控制中心磁贴后，应用会截取当前页面，并行完成 AI 结构化识别、二维码解析和来源应用图标提取，再将取餐码、商品、规格、商家等信息投递到超级岛。
+
+## 功能
+
+- 控制中心磁贴一键截图识别
+- 自定义 OpenAI 兼容接口或 Xiaomi Miclaw
+- AI、二维码和来源图标并行处理
+- 超级岛摘要态、展开态、拖拽分享和二维码小窗
+- 微信小程序来源任务与图标恢复
+- 企业微信二维码 URL 过滤
+- Shizuku shell/root 能力自动检测
+- API Key 与 Miclaw 会话使用 Android Keystore 加密保存
+
+## 环境要求
+
+- Android 16 / API 36 及以上
+- arm64-v8a 设备
+- 支持超级岛的 HyperOS 设备可使用完整体验；其他设备回退到标准实时通知
+- Shizuku 用于截图服务授权和可选系统能力
+- Miclaw 直接登录可用于非 root 设备；系统账户导入和兼容模式仅在 root 能力可用时显示
+
+## 构建
+
+准备以下环境：
+
+- JDK 17 或更新版本
+- Android SDK Platform 37
+- Android NDK `27.2.12479018`
+- Rust stable
+- `cargo-ndk`
+
+```bash
+cargo install cargo-ndk
+./gradlew :app:assembleDebug
+```
+
+Rust 原生库会由 Gradle 自动构建，无需手动复制 `.so` 文件。
+
+## Release 签名
+
+仓库不包含任何签名材料。没有 `keystore.properties` 时，`assembleRelease` 会生成 unsigned APK；需要本地签名时：
+
+```bash
+cp keystore.properties.example keystore.properties
+keytool -genkeypair \
+  -keystore keystore/signaldock-release.p12 \
+  -storetype PKCS12 \
+  -alias signaldock \
+  -keyalg RSA \
+  -keysize 4096 \
+  -validity 10000
+./gradlew :app:assembleRelease
+```
+
+在 `keystore.properties` 中填写真实密码。`keystore.properties`、`keystore/`、本机 SDK 配置和构建产物均已加入 `.gitignore`，不得提交到版本库。
+
+## 验证
+
+```bash
+./gradlew :app:testDebugUnitTest :app:lintDebug
+cd rust
+cargo test
+cargo clippy --all-targets --all-features -- -D warnings
+```
+
+## 隐私说明
+
+截图会发送到用户选择的 AI 服务商。应用不会把 API Key 或 Miclaw 会话写入普通明文偏好；识别结果和模型原始响应也不会写入应用日志。发布前仍应检查暂存文件，确保没有本机配置、账号信息、截图、日志或签名文件。
+
+## 许可证
+
+本项目以 [GNU General Public License v3.0](LICENSE) 发布。项目与 Xiaomi、HyperOS、Miclaw、WeChat 或相关商标所有者无隶属或背书关系。

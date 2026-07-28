@@ -1,0 +1,45 @@
+# IDE and local tooling
+*.iml
+.DS_Store
+/.gradle/
+/.idea/
+/.kotlin/
+/.vscode/
+/local.properties
+
+# Build outputs
+/build/
+/app/build/
+/captures/
+/.externalNativeBuild/
+/.cxx/
+/rust/target/
+/rust/tests/*.jpg
+/rust/tests/*.jpeg
+/rust/tests/*.png
+*.apk
+*.aab
+*.apks
+*.idsig
+*.hprof
+*.log
+
+# Signing material and environment secrets
+/.env
+/.env.*
+!/.env.example
+/keystore.properties
+/keystore/
+*.jks
+*.keystore
+*.p12
+*.pem
+*.key
+
+# Local diagnostics and reference files
+/build_out.txt
+/build_warnings.txt
+/strip_info.txt
+/tmp/
+/DefaultPrivilegedService.kt
+/IConnectivityManager.java

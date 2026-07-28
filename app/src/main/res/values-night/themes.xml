@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <!-- Dark variants — keep the pre-Compose window background consistent with
+         MiuixTheme dark colors and avoid a white flash on cold start. -->
+    <style name="Theme.Signaldock" parent="android:Theme.Material.NoActionBar" />
+
+</resources>
