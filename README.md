@@ -31,6 +31,8 @@ SignalDock 是面向 HyperOS 超级岛的 Android 截图识别工具。点击控
 - Rust stable
 - `cargo-ndk`
 
+先通过 `ANDROID_HOME` / `ANDROID_SDK_ROOT` 或未提交的 `local.properties` 配置 Android SDK 路径。
+
 ```bash
 cargo install cargo-ndk
 ./gradlew :app:assembleDebug
