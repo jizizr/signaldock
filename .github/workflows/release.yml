@@ -39,8 +39,8 @@ jobs:
           printf 'ANDROID_SDK_ROOT=%s\n' "$sdk_root" >> "$GITHUB_ENV"
 
           yes | "$sdkmanager" --licenses >/dev/null 2>&1 || true
-          "$sdkmanager" \
-            "platforms;android-37" \
+          "$sdkmanager" --channel=3 \
+            "platforms;android-37.0" \
             "build-tools;37.0.0" \
             "ndk;27.2.12479018"
 
