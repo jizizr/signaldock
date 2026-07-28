@@ -37,6 +37,8 @@ jobs:
           test -x "$sdkmanager"
           printf 'ANDROID_HOME=%s\n' "$sdk_root" >> "$GITHUB_ENV"
           printf 'ANDROID_SDK_ROOT=%s\n' "$sdk_root" >> "$GITHUB_ENV"
+          printf 'ANDROID_NDK_HOME=%s\n' "$sdk_root/ndk/27.2.12479018" >> "$GITHUB_ENV"
+          printf 'ANDROID_NDK_ROOT=%s\n' "$sdk_root/ndk/27.2.12479018" >> "$GITHUB_ENV"
 
           yes | "$sdkmanager" --licenses >/dev/null 2>&1 || true
           "$sdkmanager" --channel=3 \
@@ -49,6 +51,7 @@ jobs:
         run: |
           rustup toolchain install stable --profile minimal --no-self-update
           rustup default stable
+          rustup target add aarch64-linux-android
           cargo install cargo-ndk --version 4.1.2 --locked
 
       - name: Restore release signing material
