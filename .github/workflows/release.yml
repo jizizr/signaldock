@@ -105,9 +105,13 @@ jobs:
             verify --verbose --print-certs "$apk"
 
           mkdir -p dist
-          output="dist/SignalDock-${GITHUB_REF_NAME}.apk"
+          output_name="SignalDock-${GITHUB_REF_NAME}.apk"
+          output="dist/$output_name"
           cp "$apk" "$output"
-          sha256sum "$output" > "${output}.sha256"
+          (
+            cd dist
+            sha256sum "$output_name" > "${output_name}.sha256"
+          )
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
