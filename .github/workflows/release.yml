@@ -1,0 +1,126 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build and publish signed APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Java
+        uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5.6.0
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+
+      - name: Install Android SDK components
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          sdkmanager \
+            "platforms;android-37" \
+            "build-tools;37.0.0" \
+            "ndk;27.2.12479018"
+
+      - name: Install Rust toolchain
+        shell: bash
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
+          cargo install cargo-ndk --version 4.1.2 --locked
+
+      - name: Restore release signing material
+        shell: bash
+        env:
+          SIGNING_KEYSTORE_BASE64: ${{ secrets.SIGNING_KEYSTORE_BASE64 }}
+          SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
+          SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
+          SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
+        run: |
+          : "${SIGNING_KEYSTORE_BASE64:?Missing SIGNING_KEYSTORE_BASE64}"
+          : "${SIGNING_STORE_PASSWORD:?Missing SIGNING_STORE_PASSWORD}"
+          : "${SIGNING_KEY_ALIAS:?Missing SIGNING_KEY_ALIAS}"
+          : "${SIGNING_KEY_PASSWORD:?Missing SIGNING_KEY_PASSWORD}"
+
+          mkdir -p keystore
+          printf '%s' "$SIGNING_KEYSTORE_BASE64" \
+            | base64 --decode > keystore/signaldock-release.p12
+          chmod 600 keystore/signaldock-release.p12
+
+          {
+            printf 'storeFile=keystore/signaldock-release.p12\n'
+            printf 'storePassword=%s\n' "$SIGNING_STORE_PASSWORD"
+            printf 'keyAlias=%s\n' "$SIGNING_KEY_ALIAS"
+            printf 'keyPassword=%s\n' "$SIGNING_KEY_PASSWORD"
+          } > keystore.properties
+          chmod 600 keystore.properties
+
+      - name: Check Rust core
+        working-directory: rust
+        shell: bash
+        run: |
+          cargo fmt --check
+          cargo test
+          cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Build Android release
+        shell: bash
+        run: |
+          ./gradlew --no-daemon \
+            :app:testDebugUnitTest \
+            :app:lintDebug \
+            :app:assembleRelease
+
+      - name: Verify and prepare APK
+        shell: bash
+        run: |
+          apk="app/build/outputs/apk/release/app-release.apk"
+          test -f "$apk"
+          "$ANDROID_SDK_ROOT/build-tools/37.0.0/apksigner" \
+            verify --verbose --print-certs "$apk"
+
+          mkdir -p dist
+          output="dist/SignalDock-${GITHUB_REF_NAME}.apk"
+          cp "$apk" "$output"
+          sha256sum "$output" > "${output}.sha256"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: SignalDock-${{ github.ref_name }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --verify-tag \
+            --title "SignalDock $GITHUB_REF_NAME" \
+            --generate-notes \
+            --latest
+
+      - name: Remove signing material
+        if: always()
+        shell: bash
+        run: |
+          rm -f keystore.properties keystore/signaldock-release.p12
