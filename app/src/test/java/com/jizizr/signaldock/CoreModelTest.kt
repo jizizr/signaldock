@@ -4,10 +4,75 @@ import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class CoreModelTest {
+    @Test
+    fun customModel_defaultsToEmptyConnectionFields() {
+        val custom = AiSettingsStore.PRESETS.single {
+            it.id == AiSettingsStore.CUSTOM_PRESET_ID
+        }
+
+        assertEquals("", custom.baseUrl)
+        assertEquals("", custom.modelId)
+        assertEquals("", custom.reasoningEffort)
+    }
+
+    @Test
+    fun providerSwitch_keepsCustomConnectionConfigurationIndependent() {
+        val miclaw = AiSettingsStore.PRESETS.single {
+            it.id == AiSettingsStore.MICLAW_PRESET_ID
+        }
+        val custom = AiSettingsStore.PRESETS.single {
+            it.id == AiSettingsStore.CUSTOM_PRESET_ID
+        }
+        val customConfiguration = AiConnectionConfiguration(
+            baseUrl = "https://api.example.com/openai/v1",
+            modelId = "vision-model",
+            reasoningEffort = "low",
+        )
+
+        assertEquals(
+            "Miclaw 当前模型",
+            resolveAiConnectionConfiguration(miclaw, customConfiguration).modelId,
+        )
+        assertEquals(
+            customConfiguration,
+            resolveAiConnectionConfiguration(custom, customConfiguration),
+        )
+    }
+
+    @Test
+    fun legacyMigration_doesNotCopyMiclawModelIntoCustom() {
+        assertNull(
+            legacyCustomConfigurationOrNull(
+                selectedPresetId = AiSettingsStore.CUSTOM_PRESET_ID,
+                baseUrl = "",
+                modelId = "Miclaw 当前模型",
+                reasoningEffort = "",
+            ),
+        )
+    }
+
+    @Test
+    fun legacyMigration_keepsAnExistingCustomConfiguration() {
+        assertEquals(
+            AiConnectionConfiguration(
+                baseUrl = "https://api.example.com/v1",
+                modelId = "vision-model",
+                reasoningEffort = "medium",
+            ),
+            legacyCustomConfigurationOrNull(
+                selectedPresetId = AiSettingsStore.CUSTOM_PRESET_ID,
+                baseUrl = "https://api.example.com/v1",
+                modelId = "vision-model",
+                reasoningEffort = "medium",
+            ),
+        )
+    }
+
     @Test
     fun miclawSession_requiresTokenOrRefreshCredentials() {
         assertFalse(MiclawSession().isUsable)

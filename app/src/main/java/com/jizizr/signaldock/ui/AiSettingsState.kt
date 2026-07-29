@@ -20,6 +20,7 @@ import com.jizizr.signaldock.MiclawSessionStore
 @Stable
 class AiSettingsState {
     private val presets = AiSettingsStore.PRESETS
+    private val initialConfiguration = AiSettingsStore.activeConfiguration
 
     /** 预设显示名列表（与 [presetIndex] 对应） */
     val presetNames: List<String> = presets.map { it.name }
@@ -35,13 +36,13 @@ class AiSettingsState {
     )
         private set
 
-    var apiKey by mutableStateOf(AiSettingsStore.apiKey)
+    var apiKey by mutableStateOf(AiSettingsStore.apiKeyFor(AiSettingsStore.selectedPresetId))
         private set
-    var baseUrl by mutableStateOf(AiSettingsStore.baseUrl)
+    var baseUrl by mutableStateOf(initialConfiguration.baseUrl)
         private set
-    var modelId by mutableStateOf(AiSettingsStore.modelId)
+    var modelId by mutableStateOf(initialConfiguration.modelId)
         private set
-    var reasoningEffort by mutableStateOf(AiSettingsStore.reasoningEffort)
+    var reasoningEffort by mutableStateOf(initialConfiguration.reasoningEffort)
         private set
 
     var miclawThinkingEnabled by mutableStateOf(AiSettingsStore.miclawThinkingEnabled)
@@ -97,43 +98,24 @@ class AiSettingsState {
         val preset = presets.getOrNull(index) ?: return
         AiSettingsStore.applyPreset(preset)
         presetIndex = index
-        if (preset.id != AiSettingsStore.CUSTOM_PRESET_ID) {
-            baseUrl = preset.baseUrl
-            modelId = preset.modelId
-            reasoningEffort = preset.reasoningEffort
-        }
-        // API Key 按预设独立记忆
+        val configuration = AiSettingsStore.activeConfiguration
+        baseUrl = configuration.baseUrl
+        modelId = configuration.modelId
+        reasoningEffort = configuration.reasoningEffort
         apiKey = AiSettingsStore.apiKeyFor(preset.id)
     }
 
-    /**
-     * Saves the dialog draft in one transaction from the UI's perspective.
-     * Editing an endpoint/model converts a named preset into a custom configuration;
-     * editing only the key keeps the selected provider and its independent key slot.
-     */
-    fun saveConfiguration(
+    fun saveCustomConfiguration(
         apiKey: String,
         baseUrl: String,
         modelId: String,
         reasoningEffort: String,
     ) {
-        val connectionChanged = this.baseUrl != baseUrl ||
-                this.modelId != modelId ||
-                this.reasoningEffort != reasoningEffort
-
-        val currentPresetId = presets[presetIndex].id
-        val targetPresetId = if (connectionChanged) AiSettingsStore.CUSTOM_PRESET_ID
-        else currentPresetId
-        if (targetPresetId != currentPresetId) {
-            presetIndex = presets.indexOfFirst { it.id == targetPresetId }
-        }
-
         this.apiKey = apiKey
         this.baseUrl = baseUrl
         this.modelId = modelId
         this.reasoningEffort = reasoningEffort
-        AiSettingsStore.saveConfiguration(
-            presetId = targetPresetId,
+        AiSettingsStore.saveCustomConfiguration(
             apiKey = apiKey,
             baseUrl = baseUrl,
             modelId = modelId,

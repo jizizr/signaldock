@@ -10,8 +10,12 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
@@ -46,6 +50,22 @@ fun MainScreen(
     val supportsIsland = remember { HyperIslandHelper.shouldUseSuperIsland(context) }
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
+    val customModelSavedMessage = stringResource(R.string.custom_model_saved)
+    var showCustomModel by rememberSaveable { mutableStateOf(false) }
+
+    if (showCustomModel) {
+        CustomModelScreen(
+            settings = settings,
+            onBack = { showCustomModel = false },
+            onSaved = {
+                showCustomModel = false
+                scope.launch {
+                    snackbarHostState.showSnackbar(customModelSavedMessage)
+                }
+            },
+        )
+        return
+    }
 
     Scaffold(
         topBar = {
@@ -95,6 +115,7 @@ fun MainScreen(
                     AiSettingsSection(
                         settings = settings,
                         allowSystemAccountImport = shizuku.isRoot,
+                        onOpenCustomModel = { showCustomModel = true },
                         onMessage = { message ->
                             scope.launch { snackbarHostState.showSnackbar(message) }
                         },

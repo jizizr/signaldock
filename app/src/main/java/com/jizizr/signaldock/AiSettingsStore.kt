@@ -15,6 +15,20 @@ data class AiPreset(
     val transport: AiTransport = AiTransport.OPENAI_COMPATIBLE,
 )
 
+data class AiConnectionConfiguration(
+    val baseUrl: String = "",
+    val modelId: String = "",
+    val reasoningEffort: String = "",
+)
+
+data class AiRuntimeSettings(
+    val usesMiclaw: Boolean,
+    val apiKey: String,
+    val connection: AiConnectionConfiguration,
+    val miclawThinkingEnabled: Boolean,
+    val miclawUseExternalAgent: Boolean,
+)
+
 enum class AiTransport {
     OPENAI_COMPATIBLE,
     MICLAW,
@@ -33,26 +47,31 @@ object AiSettingsStore {
     // 预设列表（静态定义）
     val PRESETS = listOf(
         AiPreset(
-            id              = MICLAW_PRESET_ID,
-            name            = "Miclaw",
-            baseUrl         = "",
-            modelId         = "Miclaw 当前模型",
+            id = MICLAW_PRESET_ID,
+            name = "Miclaw",
+            baseUrl = "",
+            modelId = "Miclaw 当前模型",
             reasoningEffort = "",
-            transport       = AiTransport.MICLAW,
+            transport = AiTransport.MICLAW,
         ),
         AiPreset(
-            id              = CUSTOM_PRESET_ID,
-            name            = "自定义",
-            baseUrl         = "",
-            modelId         = "",
-            reasoningEffort = ""        )
+            id = CUSTOM_PRESET_ID,
+            name = "自定义",
+            baseUrl = "",
+            modelId = "",
+            reasoningEffort = "",
+        ),
     )
 
-    private const val PREFS_NAME           = "ai_settings"
-    private const val KEY_SELECTED_PRESET  = "selected_preset_id"
-    private const val KEY_BASE_URL         = "base_url"
-    private const val KEY_MODEL_ID         = "model_id"
-    private const val KEY_REASONING_EFFORT = "reasoning_effort"
+    private const val PREFS_NAME = "ai_settings"
+    private const val KEY_SELECTED_PRESET = "selected_preset_id"
+    private const val KEY_LEGACY_BASE_URL = "base_url"
+    private const val KEY_LEGACY_MODEL_ID = "model_id"
+    private const val KEY_LEGACY_REASONING_EFFORT = "reasoning_effort"
+    private const val KEY_CUSTOM_BASE_URL = "custom_base_url"
+    private const val KEY_CUSTOM_MODEL_ID = "custom_model_id"
+    private const val KEY_CUSTOM_REASONING_EFFORT = "custom_reasoning_effort"
+    private const val KEY_CUSTOM_CONFIGURATION_MIGRATED = "custom_configuration_migrated_v1"
     private const val KEY_MICLAW_THINKING = "miclaw_enable_thinking"
     private const val KEY_MICLAW_EXTERNAL_AGENT = "miclaw_use_external_agent"
     private const val SECRETS_PREFS_NAME = "ai_secrets"
@@ -70,6 +89,7 @@ object AiSettingsStore {
         secrets = EncryptedValueStore(context, SECRETS_PREFS_NAME, SECRETS_KEY_ALIAS)
         migratePlaintextApiKeys()
         migrateRemovedPreset()
+        migrateLegacyCustomConfiguration()
     }
 
     private fun migratePlaintextApiKeys() {
@@ -98,10 +118,33 @@ object AiSettingsStore {
         }
     }
 
+    /** Moves the pre-1.0.3 shared fields only when they actually represent Custom. */
+    private fun migrateLegacyCustomConfiguration() {
+        if (prefs.getBoolean(KEY_CUSTOM_CONFIGURATION_MIGRATED, false)) return
+
+        val selectedId = prefs.getString(KEY_SELECTED_PRESET, defaultPreset.id) ?: defaultPreset.id
+        val legacyConfiguration = legacyCustomConfigurationOrNull(
+            selectedPresetId = selectedId,
+            baseUrl = prefs.getString(KEY_LEGACY_BASE_URL, "").orEmpty(),
+            modelId = prefs.getString(KEY_LEGACY_MODEL_ID, "").orEmpty(),
+            reasoningEffort = prefs.getString(KEY_LEGACY_REASONING_EFFORT, "").orEmpty(),
+        )
+        prefs.edit {
+            if (legacyConfiguration != null) {
+                putString(KEY_CUSTOM_BASE_URL, legacyConfiguration.baseUrl)
+                putString(KEY_CUSTOM_MODEL_ID, legacyConfiguration.modelId)
+                putString(KEY_CUSTOM_REASONING_EFFORT, legacyConfiguration.reasoningEffort)
+            }
+            putBoolean(KEY_CUSTOM_CONFIGURATION_MIGRATED, true)
+            remove(KEY_LEGACY_BASE_URL)
+            remove(KEY_LEGACY_MODEL_ID)
+            remove(KEY_LEGACY_REASONING_EFFORT)
+        }
+    }
+
     /** 当前选中的预设 ID */
-    var selectedPresetId: String
+    val selectedPresetId: String
         get() = prefs.getString(KEY_SELECTED_PRESET, defaultPreset.id) ?: defaultPreset.id
-        set(value) { prefs.edit { putString(KEY_SELECTED_PRESET, value) } }
 
     val selectedPreset: AiPreset
         get() = PRESETS.firstOrNull { it.id == selectedPresetId } ?: defaultPreset
@@ -114,31 +157,31 @@ object AiSettingsStore {
     fun apiKeyFor(presetId: String): String =
         secrets.get(apiKeyPrefKey(presetId)).orEmpty()
 
-    fun setApiKeyFor(presetId: String, key: String) {
+    private fun setApiKeyFor(presetId: String, key: String) {
         val prefKey = apiKeyPrefKey(presetId)
         if (key.isBlank()) secrets.remove(prefKey) else secrets.put(prefKey, key)
     }
 
-    /** 当前活跃预设的 API Key */
-    var apiKey: String
-        get() = apiKeyFor(selectedPresetId)
-        set(value) { setApiKeyFor(selectedPresetId, value) }
+    private val customConfiguration: AiConnectionConfiguration
+        get() = AiConnectionConfiguration(
+            baseUrl = prefs.getString(KEY_CUSTOM_BASE_URL, "").orEmpty(),
+            modelId = prefs.getString(KEY_CUSTOM_MODEL_ID, "").orEmpty(),
+            reasoningEffort = prefs.getString(KEY_CUSTOM_REASONING_EFFORT, "").orEmpty(),
+        )
 
-    // ---------- baseUrl / modelId / reasoningEffort 支持手动覆盖 ----------
+    val activeConfiguration: AiConnectionConfiguration
+        get() = resolveAiConnectionConfiguration(selectedPreset, customConfiguration)
 
-    var baseUrl: String
-        get() = prefs.getString(KEY_BASE_URL, selectedPreset.baseUrl) ?: selectedPreset.baseUrl
-        set(value) { prefs.edit { putString(KEY_BASE_URL, value) } }
-
-    var modelId: String
-        get() = prefs.getString(KEY_MODEL_ID, selectedPreset.modelId) ?: selectedPreset.modelId
-        set(value) { prefs.edit { putString(KEY_MODEL_ID, value) } }
-
-    /** 空字符串表示不向 Rust 传递 reasoning_effort 参数。 */
-    var reasoningEffort: String
-        get() = prefs.getString(KEY_REASONING_EFFORT, selectedPreset.reasoningEffort)
-                    ?: selectedPreset.reasoningEffort
-        set(value) { prefs.edit { putString(KEY_REASONING_EFFORT, value) } }
+    fun runtimeSnapshot(): AiRuntimeSettings {
+        val preset = selectedPreset
+        return AiRuntimeSettings(
+            usesMiclaw = preset.transport == AiTransport.MICLAW,
+            apiKey = apiKeyFor(preset.id),
+            connection = resolveAiConnectionConfiguration(preset, customConfiguration),
+            miclawThinkingEnabled = miclawThinkingEnabled,
+            miclawUseExternalAgent = miclawUseExternalAgent,
+        )
+    }
 
     /** Direct API thinking control. Disabled by default for lower latency and stricter JSON. */
     var miclawThinkingEnabled: Boolean
@@ -150,36 +193,53 @@ object AiSettingsStore {
         get() = prefs.getBoolean(KEY_MICLAW_EXTERNAL_AGENT, false)
         set(value) { prefs.edit { putBoolean(KEY_MICLAW_EXTERNAL_AGENT, value) } }
 
-    /**
-     * 应用指定预设：更新 selectedPresetId，并将 baseUrl/modelId/reasoningEffort 重置为预设默认值。
-     * 自定义预设（id==[CUSTOM_PRESET_ID]）仅更新 selectedPresetId，不修改其他字段。
-     * 不修改 API Key（每个预设独立记忆）。
-     */
+    /** Switches only the active provider; every provider keeps its own configuration. */
     fun applyPreset(preset: AiPreset) {
-        prefs.edit {
-            putString(KEY_SELECTED_PRESET, preset.id)
-            if (preset.id != CUSTOM_PRESET_ID) {
-                putString(KEY_BASE_URL, preset.baseUrl)
-                putString(KEY_MODEL_ID, preset.modelId)
-                putString(KEY_REASONING_EFFORT, preset.reasoningEffort)
-            }
-        }
+        prefs.edit { putString(KEY_SELECTED_PRESET, preset.id) }
     }
 
-    /** Persists one complete editor draft with a single preferences transaction. */
-    fun saveConfiguration(
-        presetId: String,
+    /** Persists the complete Custom editor draft without changing the active provider. */
+    fun saveCustomConfiguration(
         apiKey: String,
         baseUrl: String,
         modelId: String,
         reasoningEffort: String,
     ) {
-        setApiKeyFor(presetId, apiKey)
+        setApiKeyFor(CUSTOM_PRESET_ID, apiKey)
         prefs.edit {
-            putString(KEY_SELECTED_PRESET, presetId)
-            putString(KEY_BASE_URL, baseUrl)
-            putString(KEY_MODEL_ID, modelId)
-            putString(KEY_REASONING_EFFORT, reasoningEffort)
+            putString(KEY_CUSTOM_BASE_URL, baseUrl)
+            putString(KEY_CUSTOM_MODEL_ID, modelId)
+            putString(KEY_CUSTOM_REASONING_EFFORT, reasoningEffort)
         }
     }
+}
+
+internal fun resolveAiConnectionConfiguration(
+    preset: AiPreset,
+    customConfiguration: AiConnectionConfiguration,
+): AiConnectionConfiguration = if (preset.id == AiSettingsStore.CUSTOM_PRESET_ID) {
+    customConfiguration
+} else {
+    AiConnectionConfiguration(
+        baseUrl = preset.baseUrl,
+        modelId = preset.modelId,
+        reasoningEffort = preset.reasoningEffort,
+    )
+}
+
+internal fun legacyCustomConfigurationOrNull(
+    selectedPresetId: String,
+    baseUrl: String,
+    modelId: String,
+    reasoningEffort: String,
+): AiConnectionConfiguration? {
+    if (selectedPresetId != AiSettingsStore.CUSTOM_PRESET_ID) return null
+    val miclaw = AiSettingsStore.PRESETS.first { it.id == AiSettingsStore.MICLAW_PRESET_ID }
+    if (baseUrl == miclaw.baseUrl &&
+        modelId == miclaw.modelId &&
+        reasoningEffort == miclaw.reasoningEffort
+    ) {
+        return null
+    }
+    return AiConnectionConfiguration(baseUrl, modelId, reasoningEffort)
 }

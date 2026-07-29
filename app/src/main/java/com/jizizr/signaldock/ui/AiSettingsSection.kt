@@ -63,6 +63,7 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
 internal fun AiSettingsSection(
     settings: AiSettingsState,
     allowSystemAccountImport: Boolean,
+    onOpenCustomModel: () -> Unit,
     onMessage: (String) -> Unit,
 ) {
     val context = LocalContext.current
@@ -71,11 +72,6 @@ internal fun AiSettingsSection(
     val presetItems = remember(settings.presetNames) {
         settings.presetNames.map { DropdownItem(text = it) }
     }
-    var showEditor by remember { mutableStateOf(false) }
-    var draftApiKey by remember { mutableStateOf("") }
-    var draftBaseUrl by remember { mutableStateOf("") }
-    var draftModelId by remember { mutableStateOf("") }
-    var draftReasoningEffort by remember { mutableStateOf("") }
     var showMiclawLogin by remember { mutableStateOf(false) }
     var draftServiceToken by remember { mutableStateOf("") }
     var draftPassToken by remember { mutableStateOf("") }
@@ -158,14 +154,6 @@ internal fun AiSettingsSection(
         }
     }
 
-    fun openEditor() {
-        draftApiKey = settings.apiKey
-        draftBaseUrl = settings.baseUrl
-        draftModelId = settings.modelId
-        draftReasoningEffort = settings.reasoningEffort
-        showEditor = true
-    }
-
     OverlaySpinnerPreference(
         items = presetItems,
         selectedIndex = settings.presetIndex,
@@ -229,32 +217,9 @@ internal fun AiSettingsSection(
             } else {
                 settings.modelId
             },
-            holdDownState = showEditor,
-            onClick = ::openEditor,
+            onClick = onOpenCustomModel,
         )
     }
-
-    AiSettingsDialog(
-        show = showEditor && !settings.usesMiclaw,
-        apiKey = draftApiKey,
-        baseUrl = draftBaseUrl,
-        modelId = draftModelId,
-        reasoningEffort = draftReasoningEffort,
-        onApiKeyChange = { draftApiKey = it },
-        onBaseUrlChange = { draftBaseUrl = it },
-        onModelIdChange = { draftModelId = it },
-        onReasoningEffortChange = { draftReasoningEffort = it },
-        onDismiss = { showEditor = false },
-        onSave = {
-            settings.saveConfiguration(
-                apiKey = draftApiKey,
-                baseUrl = draftBaseUrl.trim(),
-                modelId = draftModelId.trim(),
-                reasoningEffort = draftReasoningEffort.trim(),
-            )
-            showEditor = false
-        },
-    )
 
     MiclawLoginDialog(
         show = showMiclawLogin,
@@ -726,105 +691,6 @@ private fun MiclawAccountLoginDialog(
                         modifier = Modifier.weight(1f),
                     )
                 }
-            }
-        }
-    }
-}
-
-@Composable
-private fun AiSettingsDialog(
-    show: Boolean,
-    apiKey: String,
-    baseUrl: String,
-    modelId: String,
-    reasoningEffort: String,
-    onApiKeyChange: (String) -> Unit,
-    onBaseUrlChange: (String) -> Unit,
-    onModelIdChange: (String) -> Unit,
-    onReasoningEffortChange: (String) -> Unit,
-    onDismiss: () -> Unit,
-    onSave: () -> Unit,
-) {
-    var keyVisible by remember { mutableStateOf(false) }
-    val canSave = baseUrl.isNotBlank() && modelId.isNotBlank()
-
-    OverlayDialog(
-        title = stringResource(R.string.connection_parameters),
-        show = show,
-        onDismissRequest = onDismiss,
-    ) {
-        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            StableTextField(
-                value = apiKey,
-                onValueChange = onApiKeyChange,
-                label = stringResource(R.string.api_key),
-                singleLine = true,
-                visualTransformation = if (keyVisible) VisualTransformation.None
-                else PasswordVisualTransformation(),
-                keyboardOptions = KeyboardOptions(
-                    keyboardType = KeyboardType.Password,
-                    imeAction = ImeAction.Next,
-                ),
-                trailingIcon = {
-                    IconButton(onClick = { keyVisible = !keyVisible }) {
-                        Icon(
-                            imageVector = if (keyVisible) MiuixIcons.Hide else MiuixIcons.Show,
-                            contentDescription = stringResource(
-                                if (keyVisible) R.string.hide_api_key else R.string.show_api_key,
-                            ),
-                        )
-                    }
-                },
-                modifier = Modifier.fillMaxWidth(),
-            )
-            StableTextField(
-                value = baseUrl,
-                onValueChange = onBaseUrlChange,
-                label = stringResource(R.string.base_url),
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(
-                    keyboardType = KeyboardType.Uri,
-                    imeAction = ImeAction.Next,
-                ),
-                modifier = Modifier.fillMaxWidth(),
-            )
-            StableTextField(
-                value = modelId,
-                onValueChange = onModelIdChange,
-                label = stringResource(R.string.model_id),
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
-                modifier = Modifier.fillMaxWidth(),
-            )
-            StableTextField(
-                value = reasoningEffort,
-                onValueChange = onReasoningEffortChange,
-                label = stringResource(R.string.reasoning_effort),
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Text(
-                text = stringResource(R.string.reasoning_effort_summary),
-                style = MiuixTheme.textStyles.footnote1,
-                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                modifier = Modifier.padding(horizontal = 4.dp),
-            )
-            Spacer(Modifier.height(4.dp))
-            Row(modifier = Modifier.fillMaxWidth()) {
-                TextButton(
-                    text = stringResource(R.string.cancel),
-                    onClick = onDismiss,
-                    modifier = Modifier.weight(1f),
-                )
-                Spacer(Modifier.width(12.dp))
-                TextButton(
-                    text = stringResource(R.string.save),
-                    onClick = onSave,
-                    enabled = canSave,
-                    colors = ButtonDefaults.textButtonColorsPrimary(),
-                    modifier = Modifier.weight(1f),
-                )
             }
         }
     }

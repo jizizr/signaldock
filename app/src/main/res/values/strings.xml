@@ -52,6 +52,8 @@
     <string name="provider_preset_summary">选择 Miclaw 或自定义接口</string>
     <string name="connection_parameters">连接参数</string>
     <string name="connection_parameters_incomplete">尚未配置 Model ID</string>
+    <string name="custom_model">自定义模型</string>
+    <string name="custom_model_saved">自定义模型配置已保存</string>
     <string name="miclaw_direct_connection">Miclaw 直连</string>
     <string name="miclaw_direct_connection_ready">登录信息已保存</string>
     <string name="miclaw_external_agent_ready">将调用 Miclaw 应用</string>

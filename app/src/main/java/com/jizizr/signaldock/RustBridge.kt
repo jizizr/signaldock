@@ -75,7 +75,7 @@ object RustBridge {
      * Converts to RGBA bytes and delegates all processing to Rust.
      */
     fun analyzeScreenshot(context: android.content.Context, bitmap: Bitmap): NotificationData {
-        val settings = AiSettingsStore
+        val settings = AiSettingsStore.runtimeSnapshot()
         val preprocessingStartedAtMs = SystemClock.elapsedRealtime()
         val nativeImageFuture = CompletableFuture.supplyAsync(
             bitmap::toNativeScreenshot,
@@ -151,7 +151,8 @@ object RustBridge {
                     { bitmap.toUploadJpegBase64() },
                     preprocessingExecutor,
                 )
-                Log.i(TAG, "AI request: model=${settings.modelId}, endpoint=${settings.baseUrl}")
+                val connection = settings.connection
+                Log.i(TAG, "AI request: model=${connection.modelId}, endpoint=${connection.baseUrl}")
                 val image = nativeImageFuture.join()
                 val jpegB64 = jpegFuture.join()
                 Log.i(
@@ -161,10 +162,10 @@ object RustBridge {
                 analyzeScreenshotNative(
                     image.rgba, image.width, image.height,
                     settings.apiKey,
-                    settings.baseUrl,
-                    settings.modelId,
-                    settings.reasoningEffort,
-                    jpegB64
+                    connection.baseUrl,
+                    connection.modelId,
+                    connection.reasoningEffort,
+                    jpegB64,
                 )
             }
             parseNotificationData(json)
