@@ -10,6 +10,7 @@
 # Build outputs
 /build/
 /app/build/
+/hidden-api/build/
 /captures/
 /.externalNativeBuild/
 /.cxx/

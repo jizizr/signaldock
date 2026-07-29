@@ -11,6 +11,7 @@ import android.os.Bundle
 import android.util.Log
 import org.json.JSONObject
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.Executors
 
 /**
@@ -33,6 +34,7 @@ object SuperIslandManager : SessionNotificationManager {
 
     /** 超级岛调试通知 ID（与 LiveUpdateService 的 ID 不冲突） */
     private const val ISLAND_NOTIFICATION_ID = 9001
+    private const val MAX_TEST_NOTIFICATION_ID = 9999
 
     /**
      * xmsf 网络盲窗时长（ms），保持 disable 状态足够久，
@@ -49,6 +51,8 @@ object SuperIslandManager : SessionNotificationManager {
      */
     private val bypassExecutor = Executors.newSingleThreadExecutor()
     private val networkBlockActive = AtomicBoolean(false)
+    private val nextTestNotificationId = AtomicInteger(ISLAND_NOTIFICATION_ID)
+    private val lastTestNotificationId = AtomicInteger(-1)
     @Volatile
     private var blockedUid: Int = -1
 
@@ -421,25 +425,33 @@ object SuperIslandManager : SessionNotificationManager {
 
         val uid = if (bypassEnabled) getXmsfUid(context) else -1
         if (bypassEnabled && uid == -1) return "无法获取 xmsf UID"
+        val notificationId = nextTestNotificationId.updateAndGet { current ->
+            if (current >= MAX_TEST_NOTIFICATION_ID) ISLAND_NOTIFICATION_ID else current + 1
+        }
 
         return try {
             withBypassBlocking(context) {
+                val notificationManager = context.getSystemService(NotificationManager::class.java)
+                lastTestNotificationId.getAndSet(notificationId)
+                    .takeIf { it != -1 && it != notificationId }
+                    ?.let(notificationManager::cancel)
                 val notification = buildIslandNotification(
                     context = context,
                     title = "信岛测试",
                     content = "超级岛通知测试成功",
                     ticker = "信岛 · 超级岛测试",
                     keyText = "测试",
+                    expandedTime = 5,
                     actionTitle = "测试",
                     actionPendingIntent = PendingIntent.getActivity(
                         context,
-                        ISLAND_NOTIFICATION_ID,
+                        notificationId,
                         Intent(context, MainActivity::class.java),
                         PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
                     ),
                 )
-                context.getSystemService(NotificationManager::class.java)
-                    .notify(ISLAND_NOTIFICATION_ID, notification)
+                notificationManager.notify(notificationId, notification)
+                Log.i(TAG, "Test island notification sent with fresh id=$notificationId")
             }
 
             "超级岛通知已发送"

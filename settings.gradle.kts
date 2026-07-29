@@ -24,3 +24,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "signaldock"
 include(":app")
+include(":hidden-api")

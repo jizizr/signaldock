@@ -454,7 +454,7 @@ private fun MiclawLoginDialog(
                 colors = ButtonDefaults.textButtonColorsPrimary(),
                 modifier = Modifier.fillMaxWidth(),
             )
-            TextField(
+            StableTextField(
                 value = serviceToken,
                 onValueChange = onServiceTokenChange,
                 label = stringResource(R.string.miclaw_service_token),
@@ -473,7 +473,7 @@ private fun MiclawLoginDialog(
                 },
                 modifier = Modifier.fillMaxWidth(),
             )
-            TextField(
+            StableTextField(
                 value = passToken,
                 onValueChange = onPassTokenChange,
                 label = stringResource(R.string.miclaw_pass_token),
@@ -482,14 +482,14 @@ private fun MiclawLoginDialog(
                 else PasswordVisualTransformation(),
                 modifier = Modifier.fillMaxWidth(),
             )
-            TextField(
+            StableTextField(
                 value = userId,
                 onValueChange = onUserIdChange,
                 label = "userId",
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
-            TextField(
+            StableTextField(
                 value = cUserId,
                 onValueChange = onCUserIdChange,
                 label = "cUserId",
@@ -574,7 +574,7 @@ private fun MiclawAccountLoginDialog(
                 modifier = Modifier.padding(horizontal = 4.dp),
             )
             if (stage != MiclawAccountLoginStage.TwoFactor) {
-                TextField(
+                StableTextField(
                     value = account,
                     onValueChange = onAccountChange,
                     label = stringResource(R.string.xiaomi_account),
@@ -611,7 +611,7 @@ private fun MiclawAccountLoginDialog(
                             modifier = Modifier.fillMaxWidth().height(96.dp),
                         )
                     }
-                    TextField(
+                    StableTextField(
                         value = captcha,
                         onValueChange = onCaptchaChange,
                         label = stringResource(R.string.captcha),
@@ -696,7 +696,7 @@ private fun MiclawAccountLoginDialog(
                         modifier = Modifier.padding(horizontal = 4.dp),
                     )
                 }
-                TextField(
+                StableTextField(
                     value = ticket,
                     onValueChange = onTicketChange,
                     label = stringResource(R.string.verification_code),
@@ -754,7 +754,7 @@ private fun AiSettingsDialog(
         onDismissRequest = onDismiss,
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            TextField(
+            StableTextField(
                 value = apiKey,
                 onValueChange = onApiKeyChange,
                 label = stringResource(R.string.api_key),
@@ -777,7 +777,7 @@ private fun AiSettingsDialog(
                 },
                 modifier = Modifier.fillMaxWidth(),
             )
-            TextField(
+            StableTextField(
                 value = baseUrl,
                 onValueChange = onBaseUrlChange,
                 label = stringResource(R.string.base_url),
@@ -788,7 +788,7 @@ private fun AiSettingsDialog(
                 ),
                 modifier = Modifier.fillMaxWidth(),
             )
-            TextField(
+            StableTextField(
                 value = modelId,
                 onValueChange = onModelIdChange,
                 label = stringResource(R.string.model_id),
@@ -796,7 +796,7 @@ private fun AiSettingsDialog(
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
                 modifier = Modifier.fillMaxWidth(),
             )
-            TextField(
+            StableTextField(
                 value = reasoningEffort,
                 onValueChange = onReasoningEffortChange,
                 label = stringResource(R.string.reasoning_effort),

@@ -62,7 +62,9 @@ object AppShell {
     private val iConnectivityManager: IConnectivityManager by lazy {
         val originalBinder = SystemServiceHelper.getSystemService(Context.CONNECTIVITY_SERVICE)
             ?: throw IllegalStateException("ConnectivityService binder not available")
-        val wrapper = ShizukuBinderWrapper(originalBinder)
+        val originalService = IConnectivityManager.Stub.asInterface(originalBinder)
+            ?: throw IllegalStateException("Platform IConnectivityManager unavailable")
+        val wrapper = ShizukuBinderWrapper(originalService.asBinder())
         IConnectivityManager.Stub.asInterface(wrapper)
     }
 
@@ -72,7 +74,9 @@ object AppShell {
     private val iPackageManager: IPackageManager by lazy {
         val originalBinder = SystemServiceHelper.getSystemService("package")
             ?: throw IllegalStateException("PackageManager binder not available")
-        val wrapper = ShizukuBinderWrapper(originalBinder)
+        val originalService = IPackageManager.Stub.asInterface(originalBinder)
+            ?: throw IllegalStateException("Platform IPackageManager unavailable")
+        val wrapper = ShizukuBinderWrapper(originalService.asBinder())
         IPackageManager.Stub.asInterface(wrapper)
     }
 
@@ -95,12 +99,11 @@ object AppShell {
             if (!enabled) {
                 cm.setFirewallChainEnabled(chain, true)
                 cm.setUidFirewallRule(chain, uid, rule)
-                Log.d(TAG, "Network BLOCKED for uid=$uid")
             } else {
                 cm.setUidFirewallRule(chain, uid, rule)
                 // Do not disable the entire chain when restoring a single app
-                Log.d(TAG, "Network RESTORED for uid=$uid")
             }
+            Log.d(TAG, "Network ${if (enabled) "RESTORED" else "BLOCKED"} for uid=$uid")
             null // Success
         } catch (t: Throwable) {
             Log.e(TAG, "setPackageNetworkingEnabled failed", t)

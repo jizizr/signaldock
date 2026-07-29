@@ -1,5 +1,8 @@
 package com.jizizr.signaldock.ui
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
 import android.content.Intent
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -22,6 +25,7 @@ import com.jizizr.signaldock.SuperIslandSettingsStore
 import com.jizizr.signaldock.IslandShareEditorActivity
 import com.jizizr.signaldock.NetworkBypassMode
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import top.yukonga.miuix.kmp.basic.BasicComponent
@@ -31,7 +35,6 @@ import top.yukonga.miuix.kmp.basic.CircularProgressIndicator
 import top.yukonga.miuix.kmp.basic.DropdownItem
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
-import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.overlay.OverlayDialog
 import top.yukonga.miuix.kmp.preference.SwitchPreference
 import top.yukonga.miuix.kmp.preference.ArrowPreference
@@ -124,6 +127,8 @@ internal fun SuperIslandDebugSection(
                             return@launch
                         }
                         isSending = true
+                        context.findActivity()?.moveTaskToBack(true)
+                        delay(300)
                         val result = runCatching {
                             withContext(Dispatchers.IO) {
                                 SuperIslandManager.sendTestIslandNotification(context)
@@ -156,7 +161,7 @@ internal fun SuperIslandDebugSection(
         onDismissRequest = { showDurationDialog = false },
     ) {
         Column {
-            TextField(
+            StableTextField(
                 value = durationDraft,
                 onValueChange = { value -> durationDraft = value.filter(Char::isDigit).take(3) },
                 label = stringResource(R.string.super_island_bypass_duration_input),
@@ -173,4 +178,10 @@ internal fun SuperIslandDebugSection(
         }
     }
 
+}
+
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
 }

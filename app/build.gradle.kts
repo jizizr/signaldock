@@ -122,8 +122,8 @@ android {
         applicationId = "com.jizizr.signaldock"
         minSdk = 36
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "1.0.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -192,6 +192,7 @@ afterEvaluate {
 }
 
 dependencies {
+    compileOnly(project(":hidden-api"))
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.activity.compose)
