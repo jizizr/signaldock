@@ -2,6 +2,8 @@ package com.jizizr.signaldock.ui
 
 import android.content.Intent
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.Column
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -18,6 +20,7 @@ import com.jizizr.signaldock.R
 import com.jizizr.signaldock.SuperIslandManager
 import com.jizizr.signaldock.SuperIslandSettingsStore
 import com.jizizr.signaldock.IslandShareEditorActivity
+import com.jizizr.signaldock.NetworkBypassMode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -25,9 +28,14 @@ import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.Button
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.CircularProgressIndicator
+import top.yukonga.miuix.kmp.basic.DropdownItem
 import top.yukonga.miuix.kmp.basic.Text
+import top.yukonga.miuix.kmp.basic.TextButton
+import top.yukonga.miuix.kmp.basic.TextField
+import top.yukonga.miuix.kmp.overlay.OverlayDialog
 import top.yukonga.miuix.kmp.preference.SwitchPreference
 import top.yukonga.miuix.kmp.preference.ArrowPreference
+import top.yukonga.miuix.kmp.preference.OverlaySpinnerPreference
 
 @Composable
 internal fun SuperIslandDebugSection(
@@ -43,16 +51,54 @@ internal fun SuperIslandDebugSection(
     var networkBypassEnabled by remember {
         mutableStateOf(SuperIslandSettingsStore.networkBypassEnabled)
     }
+    var networkBypassMode by remember {
+        mutableStateOf(SuperIslandSettingsStore.networkBypassMode)
+    }
+    var showDurationDialog by remember { mutableStateOf(false) }
+    var durationDraft by remember {
+        mutableStateOf(SuperIslandSettingsStore.networkBypassDurationMs.toString())
+    }
 
     SwitchPreference(
         checked = networkBypassEnabled,
         onCheckedChange = { enabled ->
             networkBypassEnabled = enabled
             SuperIslandSettingsStore.networkBypassEnabled = enabled
+            networkBypassMode = SuperIslandSettingsStore.networkBypassMode
         },
         title = stringResource(R.string.super_island_network_bypass),
         summary = stringResource(R.string.super_island_network_bypass_summary),
     )
+
+    val bypassModeItems = listOf(
+        DropdownItem(text = stringResource(R.string.super_island_bypass_mode_standard)),
+        DropdownItem(text = stringResource(R.string.super_island_bypass_mode_custom)),
+    )
+    if (networkBypassEnabled) {
+        OverlaySpinnerPreference(
+            items = bypassModeItems,
+            selectedIndex = if (networkBypassMode == NetworkBypassMode.CUSTOM) 1 else 0,
+            title = stringResource(R.string.super_island_bypass_mode),
+            summary = stringResource(R.string.super_island_bypass_mode_summary),
+            onSelectedIndexChange = { index ->
+                networkBypassMode = if (index == 1) NetworkBypassMode.CUSTOM else NetworkBypassMode.STANDARD
+                SuperIslandSettingsStore.networkBypassMode = networkBypassMode
+            },
+        )
+        if (networkBypassMode == NetworkBypassMode.CUSTOM) {
+            ArrowPreference(
+                title = stringResource(R.string.super_island_bypass_duration),
+                summary = stringResource(
+                    R.string.super_island_bypass_duration_summary,
+                    SuperIslandSettingsStore.networkBypassDurationMs,
+                ),
+                onClick = {
+                    durationDraft = SuperIslandSettingsStore.networkBypassDurationMs.toString()
+                    showDurationDialog = true
+                },
+            )
+        }
+    }
 
     ArrowPreference(
         title = stringResource(R.string.super_island_share_template),
@@ -103,5 +149,28 @@ internal fun SuperIslandDebugSection(
             }
         },
     )
+
+    OverlayDialog(
+        title = stringResource(R.string.super_island_bypass_duration),
+        show = showDurationDialog,
+        onDismissRequest = { showDurationDialog = false },
+    ) {
+        Column {
+            TextField(
+                value = durationDraft,
+                onValueChange = { value -> durationDraft = value.filter(Char::isDigit).take(3) },
+                label = stringResource(R.string.super_island_bypass_duration_input),
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            TextButton(
+                text = stringResource(R.string.save),
+                onClick = {
+                    durationDraft.toIntOrNull()?.let { SuperIslandSettingsStore.networkBypassDurationMs = it }
+                    showDurationDialog = false
+                },
+            )
+        }
+    }
 
 }

@@ -10,6 +10,7 @@ import android.graphics.drawable.Icon
 import android.os.Bundle
 import android.util.Log
 import org.json.JSONObject
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.Executors
 
 /**
@@ -39,12 +40,17 @@ object SuperIslandManager : SessionNotificationManager {
      * 参考 InstallerX-Revived XIAOMI_MAGIC_BLIND_WINDOW_MS。
      */
     private const val BLIND_WINDOW_MS = 100L
+    private const val MAX_NETWORK_RETRIES = 2
+    private const val NETWORK_RETRY_DELAY_MS = 50L
 
     /**
      * 单线程执行器，保证 bypass 严格串行（等价于 InstallerX 的 Mutex）。
      * 前一个 disable→notify→delay→enable 全部完成后才开始下一个。
      */
     private val bypassExecutor = Executors.newSingleThreadExecutor()
+    private val networkBlockActive = AtomicBoolean(false)
+    @Volatile
+    private var blockedUid: Int = -1
 
     // ── 通知渠道 ────────────────────────────────────────────
 
@@ -74,20 +80,9 @@ object SuperIslandManager : SessionNotificationManager {
         }
     }
 
-    /**
-     * 在白名单绕过的保护下执行 [block]。
-     *
-     * 时序匹配 InstallerX-Revived `notifyWithXiaomiMagic`：
-     *   1. setPackageNetworkingEnabled(false) — Binder IPC 禁用 xmsf (~μs)
-     *   2. block()  — 发送通知 / startForeground
-     *   3. Thread.sleep(BLIND_WINDOW_MS) — 100ms 盲窗，等 SystemUI 异步认证完成
-     *   4. setPackageNetworkingEnabled(true)  — Binder IPC 恢复 xmsf
-     *
-     * 并发安全：[bypassExecutor] 单线程串行执行（等价于 InstallerX 的 Mutex）。
-     * 调用方不阻塞（fire-and-forget 提交到 executor）。
-     */
+    /** Enqueue a notification while the XMSF network is briefly blocked. */
     private fun withBypass(context: Context, block: () -> Unit) {
-        if (!SuperIslandSettingsStore.networkBypassEnabled) {
+        if (SuperIslandSettingsStore.networkBypassMode == NetworkBypassMode.DISABLED) {
             block()
             return
         }
@@ -98,35 +93,80 @@ object SuperIslandManager : SessionNotificationManager {
             return
         }
         bypassExecutor.execute {
-            if (!AppShell.isShizukuAvailable) {
-                Log.w(TAG, "withBypass: shell not connected, skipping bypass but executing block")
-                block()
-                return@execute
+            executeBypass(uid, block)
+        }
+    }
+
+    /** Synchronous variant used by the debug notification path. */
+    private fun withBypassBlocking(context: Context, block: () -> Unit) {
+        if (SuperIslandSettingsStore.networkBypassMode == NetworkBypassMode.DISABLED) {
+            block()
+            return
+        }
+        val uid = getXmsfUid(context)
+        if (uid == -1 || !AppShell.isShizukuAvailable) {
+            block()
+            return
+        }
+        bypassExecutor.submit { executeBypass(uid, block) }.get()
+    }
+
+    private fun executeBypass(uid: Int, block: () -> Unit) {
+        if (!AppShell.isShizukuAvailable) {
+            Log.w(TAG, "Shizuku unavailable; sending notification without bypass")
+            block()
+            return
+        }
+
+        var networkBlockAttempted = false
+        try {
+            networkBlockAttempted = true
+            networkBlockActive.set(true)
+            blockedUid = uid
+            val networkBlocked = setXmsfNetworkingWithRetry(uid, enabled = false)
+            block()
+            if (networkBlocked) {
+                Thread.sleep(currentBypassDurationMs())
             }
-            var blockExecuted = false
-            try {
-                val err1 = AppShell.setPackageNetworkingEnabled(uid, false)
-                if (err1 != null) {
-                    Log.e(TAG, "setPackageNetworkingEnabled(false) returned error: $err1")
-                }
-                block()
-                blockExecuted = true
-                Thread.sleep(BLIND_WINDOW_MS)
-            } catch (e: Exception) {
-                Log.e(TAG, "withBypass failed", e)
-                if (!blockExecuted) {
-                    block()
-                }
-            } finally {
-                try {
-                    val err2 = AppShell.setPackageNetworkingEnabled(uid, true)
-                    if (err2 != null) {
-                        Log.e(TAG, "setPackageNetworkingEnabled(true) returned error: $err2")
-                    }
-                } catch (e: Exception) {
-                    Log.w(TAG, "withBypass: restore xmsf network failed", e)
-                }
+        } catch (interrupted: InterruptedException) {
+            Thread.currentThread().interrupt()
+            Log.w(TAG, "Bypass worker interrupted", interrupted)
+        } catch (error: Throwable) {
+            Log.e(TAG, "Bypass notification failed", error)
+        } finally {
+            if (networkBlockAttempted) {
+                restoreXmsfNetworking(uid)
             }
+        }
+    }
+
+    private fun currentBypassDurationMs(): Long = when (SuperIslandSettingsStore.networkBypassMode) {
+        NetworkBypassMode.CUSTOM -> SuperIslandSettingsStore.networkBypassDurationMs.toLong()
+        NetworkBypassMode.STANDARD -> BLIND_WINDOW_MS
+        NetworkBypassMode.DISABLED -> 0L
+    }
+
+    private fun setXmsfNetworkingWithRetry(uid: Int, enabled: Boolean): Boolean {
+        var lastError: String? = null
+        repeat(MAX_NETWORK_RETRIES) { attempt ->
+            val error = AppShell.setPackageNetworkingEnabled(uid, enabled)
+            if (error == null) return true
+            lastError = error
+            Log.w(TAG, "XMSF network ${if (enabled) "restore" else "block"} failed " +
+                "(${attempt + 1}/$MAX_NETWORK_RETRIES): $error")
+            if (attempt + 1 < MAX_NETWORK_RETRIES) Thread.sleep(NETWORK_RETRY_DELAY_MS)
+        }
+        Log.e(TAG, "XMSF network operation failed: $lastError")
+        return false
+    }
+
+    private fun restoreXmsfNetworking(uid: Int) {
+        val restored = setXmsfNetworkingWithRetry(uid, enabled = true)
+        if (restored) {
+            networkBlockActive.set(false)
+            blockedUid = -1
+        } else {
+            Log.e(TAG, "XMSF network restore failed; leaving diagnostic state active")
         }
     }
 
@@ -374,7 +414,7 @@ object SuperIslandManager : SessionNotificationManager {
      * @return 描述结果的字符串，用于 UI 显示
      */
     fun sendTestIslandNotification(context: Context): String {
-        val bypassEnabled = SuperIslandSettingsStore.networkBypassEnabled
+        val bypassEnabled = SuperIslandSettingsStore.networkBypassMode != NetworkBypassMode.DISABLED
         if (bypassEnabled && !AppShell.isShizukuAvailable) {
             return "Shizuku Shell 未连接，请先授权 Shizuku"
         }
@@ -383,39 +423,28 @@ object SuperIslandManager : SessionNotificationManager {
         if (bypassEnabled && uid == -1) return "无法获取 xmsf UID"
 
         return try {
-            if (bypassEnabled) {
-                AppShell.setPackageNetworkingEnabled(uid, false)
-            }
-
-            // 2. 发送超级岛通知
-            val notification = buildIslandNotification(
-                context = context,
-                title = "信岛测试",
-                content = "超级岛通知测试成功",
-                ticker = "信岛 · 超级岛测试",
-                keyText = "测试",
-                actionTitle = "测试",
-                actionPendingIntent = PendingIntent.getActivity(
-                    context,
-                    ISLAND_NOTIFICATION_ID,
-                    Intent(context, MainActivity::class.java),
-                    PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-                ),
-            )
-            val nm = context.getSystemService(NotificationManager::class.java)
-            nm.notify(ISLAND_NOTIFICATION_ID, notification)
-
-            if (bypassEnabled) {
-                Thread.sleep(BLIND_WINDOW_MS)
-                AppShell.setPackageNetworkingEnabled(uid, true)
+            withBypassBlocking(context) {
+                val notification = buildIslandNotification(
+                    context = context,
+                    title = "信岛测试",
+                    content = "超级岛通知测试成功",
+                    ticker = "信岛 · 超级岛测试",
+                    keyText = "测试",
+                    actionTitle = "测试",
+                    actionPendingIntent = PendingIntent.getActivity(
+                        context,
+                        ISLAND_NOTIFICATION_ID,
+                        Intent(context, MainActivity::class.java),
+                        PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+                    ),
+                )
+                context.getSystemService(NotificationManager::class.java)
+                    .notify(ISLAND_NOTIFICATION_ID, notification)
             }
 
             "超级岛通知已发送"
         } catch (e: Exception) {
             Log.e(TAG, "sendTestIslandNotification failed", e)
-            if (bypassEnabled) {
-                try { AppShell.setPackageNetworkingEnabled(uid, true) } catch (_: Exception) {}
-            }
             "发送失败: ${e.message}"
         }
     }
@@ -496,7 +525,10 @@ object SuperIslandManager : SessionNotificationManager {
     }
 
     override fun onServiceDestroy(context: Context) {
-        // Do not release AppShell here to avoid race conditions with new sessions
+        val uid = blockedUid
+        if (networkBlockActive.get() && uid != -1) {
+            bypassExecutor.execute { restoreXmsfNetworking(uid) }
+        }
     }
 
     // ── 截图分析集成 API ─────────────────────────────────────

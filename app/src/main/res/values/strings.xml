@@ -92,6 +92,13 @@
     <string name="send">发送</string>
     <string name="super_island_network_bypass">断网绕过白名单</string>
     <string name="super_island_network_bypass_summary">发送时短暂断开小米推送网络</string>
+    <string name="super_island_bypass_mode">绕过模式</string>
+    <string name="super_island_bypass_mode_summary">标准模式只在发送瞬间断网；自定义模式可调整盲窗</string>
+    <string name="super_island_bypass_mode_standard">标准（100 毫秒）</string>
+    <string name="super_island_bypass_mode_custom">自定义时长</string>
+    <string name="super_island_bypass_duration">盲窗时长</string>
+    <string name="super_island_bypass_duration_summary">当前 %1$d 毫秒（建议 100～500 毫秒）</string>
+    <string name="super_island_bypass_duration_input">毫秒</string>
     <string name="super_island_share_template">拖拽分享文案</string>
     <string name="super_island_share_template_summary">编辑发送正文</string>
     <string name="super_island_share_message">发送正文</string>

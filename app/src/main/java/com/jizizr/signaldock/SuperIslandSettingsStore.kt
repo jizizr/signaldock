@@ -8,6 +8,8 @@ import androidx.core.content.edit
 object SuperIslandSettingsStore {
     private const val PREFS_NAME = "super_island_settings"
     private const val KEY_NETWORK_BYPASS_ENABLED = "network_bypass_enabled"
+    private const val KEY_NETWORK_BYPASS_MODE = "network_bypass_mode"
+    private const val KEY_NETWORK_BYPASS_DURATION_MS = "network_bypass_duration_ms"
     private const val KEY_SHARE_CONTENT_TEMPLATE = "share_content_template"
 
     val defaultShareTemplate = IslandShareTemplate(
@@ -23,8 +25,41 @@ object SuperIslandSettingsStore {
     }
 
     var networkBypassEnabled: Boolean
-        get() = prefs.getBoolean(KEY_NETWORK_BYPASS_ENABLED, true)
-        set(value) = prefs.edit { putBoolean(KEY_NETWORK_BYPASS_ENABLED, value) }
+        get() = networkBypassMode != NetworkBypassMode.DISABLED
+        set(value) {
+            prefs.edit {
+                putBoolean(KEY_NETWORK_BYPASS_ENABLED, value)
+                if (!value) putString(KEY_NETWORK_BYPASS_MODE, NetworkBypassMode.DISABLED.storageValue)
+                else if (networkBypassMode == NetworkBypassMode.DISABLED) {
+                    putString(KEY_NETWORK_BYPASS_MODE, NetworkBypassMode.STANDARD.storageValue)
+                }
+            }
+        }
+
+    var networkBypassMode: NetworkBypassMode
+        get() {
+            val stored = prefs.getString(KEY_NETWORK_BYPASS_MODE, null)
+            if (stored != null) return NetworkBypassMode.fromStorageValue(stored)
+            return if (prefs.getBoolean(KEY_NETWORK_BYPASS_ENABLED, true)) {
+                NetworkBypassMode.STANDARD
+            } else {
+                NetworkBypassMode.DISABLED
+            }
+        }
+        set(value) = prefs.edit {
+            putString(KEY_NETWORK_BYPASS_MODE, value.storageValue)
+            putBoolean(KEY_NETWORK_BYPASS_ENABLED, value != NetworkBypassMode.DISABLED)
+        }
+
+    var networkBypassDurationMs: Int
+        get() = prefs.getInt(KEY_NETWORK_BYPASS_DURATION_MS, NetworkBypassMode.DEFAULT_DURATION_MS)
+            .coerceIn(NetworkBypassMode.MIN_DURATION_MS, NetworkBypassMode.MAX_DURATION_MS)
+        set(value) = prefs.edit {
+            putInt(
+                KEY_NETWORK_BYPASS_DURATION_MS,
+                value.coerceIn(NetworkBypassMode.MIN_DURATION_MS, NetworkBypassMode.MAX_DURATION_MS),
+            )
+        }
 
     val shareTemplate: IslandShareTemplate
         get() = defaultShareTemplate.copy(
@@ -36,6 +71,21 @@ object SuperIslandSettingsStore {
         prefs.edit {
             putString(KEY_SHARE_CONTENT_TEMPLATE, content)
         }
+    }
+}
+
+enum class NetworkBypassMode(val storageValue: String) {
+    DISABLED("disabled"),
+    STANDARD("standard"),
+    CUSTOM("custom");
+
+    companion object {
+        const val DEFAULT_DURATION_MS = 100
+        const val MIN_DURATION_MS = 100
+        const val MAX_DURATION_MS = 500
+
+        fun fromStorageValue(value: String?): NetworkBypassMode =
+            entries.firstOrNull { it.storageValue == value } ?: STANDARD
     }
 }
 
