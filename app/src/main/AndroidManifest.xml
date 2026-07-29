@@ -4,6 +4,7 @@
 
     <queries>
         <package android:name="com.aios.osbot" />
+        <package android:name="moe.shizuku.privileged.api" />
         <intent>
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />

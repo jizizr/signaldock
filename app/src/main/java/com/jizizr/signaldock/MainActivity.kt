@@ -1,18 +1,22 @@
 package com.jizizr.signaldock
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import com.jizizr.signaldock.ui.MainScreen
+import com.jizizr.signaldock.ui.ShizukuGateScreen
 import com.jizizr.signaldock.ui.ShizukuState
 import com.jizizr.signaldock.ui.SplashScreen
 import com.jizizr.signaldock.ui.theme.SignaldockTheme
@@ -23,12 +27,17 @@ class MainActivity : ComponentActivity() {
     companion object {
         private const val TAG = "MainActivity"
         private const val SHIZUKU_REQUEST_CODE = 101
+        private const val SHIZUKU_PACKAGE = "moe.shizuku.privileged.api"
+        private const val SHIZUKU_HOME = "https://shizuku.rikka.app/"
     }
 
     /** Shizuku 状态（Compose 可观察），由下方监听器维护 */
     private val shizuku = ShizukuState()
 
     private var notificationGranted by mutableStateOf(false)
+    private var shizukuPermissionPending by mutableStateOf(false)
+    private var shizukuPermissionDenied by mutableStateOf(false)
+    private var shizukuPermissionAttempted = false
 
     private val requestNotificationPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -41,6 +50,8 @@ class MainActivity : ComponentActivity() {
     private val shizukuPermissionListener =
         Shizuku.OnRequestPermissionResultListener { code, result ->
             if (code == SHIZUKU_REQUEST_CODE) {
+                shizukuPermissionPending = false
+                shizukuPermissionDenied = result != PackageManager.PERMISSION_GRANTED
                 refreshShizukuState()
             }
         }
@@ -53,6 +64,9 @@ class MainActivity : ComponentActivity() {
         shizuku.available = false
         shizuku.granted = false
         shizuku.uid = -1
+        shizukuPermissionPending = false
+        shizukuPermissionDenied = false
+        shizukuPermissionAttempted = false
     }
 
     private fun refreshShizukuState() {
@@ -67,12 +81,39 @@ class MainActivity : ComponentActivity() {
         } else {
             -1
         }
+        if (granted) {
+            shizukuPermissionPending = false
+            shizukuPermissionDenied = false
+        }
         Log.i(TAG, "Shizuku state available=$available granted=$granted uid=${shizuku.uid}")
     }
 
     private fun requestShizukuPermission() {
-        if (!shizuku.available || shizuku.granted) return
-        Shizuku.requestPermission(SHIZUKU_REQUEST_CODE)
+        refreshShizukuState()
+        if (!shizuku.available || shizuku.granted || shizukuPermissionPending) return
+
+        shizukuPermissionAttempted = true
+        shizukuPermissionPending = true
+        shizukuPermissionDenied = false
+        runCatching { Shizuku.requestPermission(SHIZUKU_REQUEST_CODE) }
+            .onFailure { error ->
+                shizukuPermissionPending = false
+                Log.e(TAG, "Failed to request Shizuku permission", error)
+            }
+    }
+
+    private fun openShizuku() {
+        val launchIntent = packageManager.getLaunchIntentForPackage(SHIZUKU_PACKAGE)
+        if (launchIntent != null) {
+            startActivity(launchIntent)
+            return
+        }
+
+        val marketIntent = Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=$SHIZUKU_PACKAGE"))
+        runCatching { startActivity(marketIntent) }
+            .onFailure {
+                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(SHIZUKU_HOME)))
+            }
     }
 
     // ── Lifecycle ───────────────────────────────────────────────────────────
@@ -98,6 +139,24 @@ class MainActivity : ComponentActivity() {
                 var showSplash by rememberSaveable { mutableStateOf(true) }
                 if (showSplash) {
                     SplashScreen(onFinished = { showSplash = false })
+                } else if (!shizuku.ready) {
+                    LaunchedEffect(shizuku.available, shizuku.granted) {
+                        if (
+                            shizuku.available &&
+                            !shizuku.granted &&
+                            !shizukuPermissionAttempted
+                        ) {
+                            requestShizukuPermission()
+                        }
+                    }
+                    ShizukuGateScreen(
+                        available = shizuku.available,
+                        permissionPending = shizukuPermissionPending,
+                        permissionDenied = shizukuPermissionDenied,
+                        onOpenShizuku = ::openShizuku,
+                        onRequestPermission = ::requestShizukuPermission,
+                        onRetry = ::refreshShizukuState,
+                    )
                 } else {
                     MainScreen(
                         shizuku = shizuku,
