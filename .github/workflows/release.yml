@@ -9,11 +9,10 @@ on:
   workflow_dispatch:
 
 env:
-  HOST_ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
-  ANDROID_HOME: ${{ github.workspace }}/.android-sdk
-  ANDROID_SDK_ROOT: ${{ github.workspace }}/.android-sdk
-  ANDROID_NDK_HOME: ${{ github.workspace }}/.android-sdk/ndk/27.2.12479018
-  ANDROID_NDK_ROOT: ${{ github.workspace }}/.android-sdk/ndk/27.2.12479018
+  ANDROID_HOME: /usr/local/lib/android/sdk
+  ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+  ANDROID_NDK_HOME: /usr/local/lib/android/sdk/ndk/27.2.12479018
+  ANDROID_NDK_ROOT: /usr/local/lib/android/sdk/ndk/27.2.12479018
 
 permissions:
   contents: write
@@ -44,21 +43,11 @@ jobs:
           cache-provider: basic
           cache-read-only: ${{ github.ref != 'refs/heads/main' }}
 
-      - name: Restore Android SDK cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            ${{ env.ANDROID_SDK_ROOT }}/platforms/android-37.0
-            ${{ env.ANDROID_SDK_ROOT }}/build-tools/37.0.0
-            ${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018
-          key: android-sdk-${{ runner.os }}-${{ runner.arch }}-platform-37.0-build-tools-37.0.0-ndk-27.2.12479018-v2
-
       - name: Install Android SDK components
         shell: bash
         run: |
-          sdkmanager="$HOST_ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          sdkmanager="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
           test -x "$sdkmanager"
-          mkdir -p "$ANDROID_SDK_ROOT"
 
           packages=()
           test -d "$ANDROID_SDK_ROOT/platforms/android-37.0" || packages+=("platforms;android-37.0")
@@ -66,8 +55,8 @@ jobs:
           test -d "$ANDROID_NDK_HOME" || packages+=("ndk;27.2.12479018")
 
           if (( ${#packages[@]} > 0 )); then
-            yes | "$sdkmanager" --sdk_root="$ANDROID_SDK_ROOT" --licenses >/dev/null 2>&1 || true
-            "$sdkmanager" --sdk_root="$ANDROID_SDK_ROOT" --channel=3 "${packages[@]}"
+            yes | "$sdkmanager" --licenses >/dev/null 2>&1 || true
+            "$sdkmanager" --channel=3 "${packages[@]}"
           else
             echo "Android SDK components restored from cache"
           fi
@@ -91,8 +80,9 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             rust/target
-          key: rust-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust-toolchain.outputs.cache-version }}-${{ hashFiles('rust/Cargo.lock') }}-cargo-ndk-4.1.2-v1
+          key: rust-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust-toolchain.outputs.cache-version }}-${{ hashFiles('rust/Cargo.lock') }}-cargo-ndk-4.1.2-${{ hashFiles('rust/Cargo.toml', 'rust/src/**') }}-v2
           restore-keys: |
+            rust-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust-toolchain.outputs.cache-version }}-${{ hashFiles('rust/Cargo.lock') }}-cargo-ndk-4.1.2-
             rust-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust-toolchain.outputs.cache-version }}-
 
       - name: Install cargo-ndk
