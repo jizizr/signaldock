@@ -12,6 +12,15 @@
     <string name="tile_add_request_in_progress">添加磁贴请求正在处理中</string>
     <string name="tile_add_unavailable">当前系统不支持直接添加磁贴</string>
     <string name="tile_add_failed">添加磁贴失败</string>
+    <string name="tile_action_failed">磁贴执行失败，请打开信岛检查</string>
+    <string name="tile_notification_permission_required">请先授予信岛通知权限</string>
+    <string name="tile_ai_configuration_required">请先完成 AI 服务配置</string>
+    <string name="tile_shizuku_permission_required">请先授权 Shizuku</string>
+    <string name="tile_shizuku_unavailable">请先启动 Shizuku</string>
+    <string name="tile_accessibility_enable_failed">无法自动开启截图服务</string>
+    <string name="tile_accessibility_unavailable">截图服务未就绪，请打开信岛检查</string>
+    <string name="screenshot_busy">已有截图识别任务正在进行</string>
+    <string name="screenshot_failed">截图失败，请重试</string>
     <string name="accessibility_service_description">允许「截图实时通知」通过无障碍服务截取屏幕，用于本地 OCR 和二维码分析，无网络请求。</string>
     <string name="qr_show_image">查看图片</string>
     <string name="section_runtime_status">运行状态</string>
