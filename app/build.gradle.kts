@@ -202,6 +202,7 @@ dependencies {
     debugImplementation(libs.androidx.compose.ui.tooling.preview)
     // Miuix — HyperOS-style Compose UI (theme, components, preferences, icons)
     implementation(libs.miuix.ui)
+    implementation(libs.miuix.blur)
     implementation(libs.miuix.preference)
     implementation(libs.miuix.icons)
     // LSPosed HiddenApiBypass — bypasses Android hidden API restrictions (incl. MIUI api=blocked)
