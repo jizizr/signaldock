@@ -30,6 +30,8 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
 
       - name: Set up Java
         uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5.6.0
@@ -162,6 +164,26 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+      - name: Build release notes from commits
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          previous_tag="$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || true)"
+          if [[ -n "$previous_tag" ]]; then
+            commit_range="$previous_tag..$GITHUB_REF_NAME"
+            comparison="$previous_tag -> $GITHUB_REF_NAME"
+          else
+            commit_range="$GITHUB_REF_NAME"
+            comparison="$GITHUB_REF_NAME"
+          fi
+
+          {
+            printf '## 本次更新\n\n'
+            printf '提交范围：`%s`\n\n' "$comparison"
+            git log --reverse --format='### %s%n%n%b%n' "$commit_range"
+            printf '\n'
+          } > release-notes.md
+
       - name: Publish GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         shell: bash
@@ -171,7 +193,7 @@ jobs:
           gh release create "$GITHUB_REF_NAME" dist/* \
             --verify-tag \
             --title "SignalDock $GITHUB_REF_NAME" \
-            --generate-notes \
+            --notes-file release-notes.md \
             --latest
 
       - name: Remove signing material
