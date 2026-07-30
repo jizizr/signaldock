@@ -45,6 +45,41 @@ class CoreModelTest {
     }
 
     @Test
+    fun aiConfigurationReadiness_handlesCustomAndMiclawRequirements() {
+        val connection = AiConnectionConfiguration(
+            baseUrl = "https://api.example.com/v1",
+            modelId = "vision-model",
+        )
+        assertTrue(
+            isAiConfigurationReady(
+                usesMiclaw = false,
+                miclawUseExternalAgent = false,
+                miclawSessionAvailable = false,
+                apiKey = "example-key",
+                connection = connection,
+            ),
+        )
+        assertFalse(
+            isAiConfigurationReady(
+                usesMiclaw = false,
+                miclawUseExternalAgent = false,
+                miclawSessionAvailable = false,
+                apiKey = "",
+                connection = connection,
+            ),
+        )
+        assertTrue(
+            isAiConfigurationReady(
+                usesMiclaw = true,
+                miclawUseExternalAgent = false,
+                miclawSessionAvailable = true,
+                apiKey = "",
+                connection = AiConnectionConfiguration(),
+            ),
+        )
+    }
+
+    @Test
     fun legacyMigration_doesNotCopyMiclawModelIntoCustom() {
         assertNull(
             legacyCustomConfigurationOrNull(
@@ -79,6 +114,13 @@ class CoreModelTest {
         assertTrue(MiclawSession(serviceToken = "service-token").isUsable)
         assertTrue(MiclawSession(passToken = "pass-token", userId = "123").isUsable)
         assertFalse(MiclawSession(passToken = "pass-token").isUsable)
+    }
+
+    @Test
+    fun miclawUnauthorizedDiagnostic_usesSanitizedDiagnosticCode() {
+        assertTrue(isMiclawUnauthorizedDiagnostic("miclaw_http_401"))
+        assertFalse(isMiclawUnauthorizedDiagnostic("miclaw_http_500"))
+        assertFalse(isMiclawUnauthorizedDiagnostic(""))
     }
 
     @Test
@@ -181,6 +223,63 @@ class CoreModelTest {
         val inserted = TextFieldValue("{号X码}", TextRange(3))
 
         assertEquals(previous, applyAtomicIslandShareTokenEdit(previous, inserted))
+    }
+
+    @Test
+    fun diagnosticLogSanitizer_removesCredentialsAndPersonalIdentifiers() {
+        val groqKey = listOf("gsk", "EXAMPLEONLY123456").joinToString("_")
+        val bearerHeader = "Bearer " + "example-access-token"
+        val serviceTokenName = "service" + "Token"
+        val input = """
+            Authorization: $bearerHeader
+            api_key=$groqKey
+            Cookie: $serviceTokenName=example-cookie; cUserId=123456789
+            password: example-password
+            request=https://example.com/v1?access_token=example-query-token&mode=test
+            contact=example.user@example.com phone=13800138000
+        """.trimIndent()
+
+        val sanitized = DiagnosticLogStore.sanitizeForExport(input)
+
+        assertFalse(sanitized.contains("example-access-token"))
+        assertFalse(sanitized.contains(groqKey))
+        assertFalse(sanitized.contains("example-cookie"))
+        assertFalse(sanitized.contains("example-password"))
+        assertFalse(sanitized.contains("example-query-token"))
+        assertFalse(sanitized.contains("example.user@example.com"))
+        assertFalse(sanitized.contains("13800138000"))
+        assertTrue(sanitized.contains("<redacted"))
+    }
+
+    @Test
+    fun recognitionHistorySummary_prefersMerchantAndItem() {
+        val record = RecognitionHistoryRecord(
+            id = "example-record",
+            createdAtMs = 0,
+            analysisDurationMs = 0,
+            screenshotWidth = 1080,
+            screenshotHeight = 2400,
+            sourcePackage = "com.example.order",
+            sourceTaskId = -1,
+            providerName = "Custom",
+            title = "A1024",
+            body = "请到柜台取餐",
+            infoLines = listOf("请到柜台取餐"),
+            qrFound = false,
+            content = "取餐码",
+            iconType = "food",
+            buttonText = "已取餐",
+            price = "¥18.00",
+            item = "示例饮品",
+            itemDetail = "少冰",
+            merchant = "示例门店",
+            error = "",
+            hasScreenshot = true,
+            hasQrImage = false,
+            hasSourceIcon = true,
+        )
+
+        assertEquals("示例门店 · 示例饮品", recognitionHistorySummary(record))
     }
 
 }
