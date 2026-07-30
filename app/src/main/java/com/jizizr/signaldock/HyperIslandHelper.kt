@@ -4,7 +4,6 @@ import android.content.Context
 import androidx.core.net.toUri
 import android.os.Bundle
 import android.provider.Settings
-import android.util.Log
 
 /**
  * HyperOS 超级岛设备检测与查询工具。
@@ -51,7 +50,7 @@ object HyperIslandHelper {
             )
             method.invoke(null, "persist.sys.feature.island", false) as Boolean
         } catch (e: Exception) {
-            Log.w(TAG, "isSupportIsland check failed", e)
+            AppLog.w(TAG, "isSupportIsland check failed", e)
             false
         }
     }
@@ -71,7 +70,7 @@ object HyperIslandHelper {
                 0
             )
         } catch (e: Exception) {
-            Log.w(TAG, "getFocusProtocolVersion failed", e)
+            AppLog.w(TAG, "getFocusProtocolVersion failed", e)
             0
         }
     }
@@ -88,7 +87,7 @@ object HyperIslandHelper {
             val result = context.contentResolver.call(uri, "canShowFocus", null, extras)
             result?.getBoolean("canShowFocus", false) == true
         } catch (e: Exception) {
-            Log.d(TAG, "hasFocusPermission check failed: $e")
+            AppLog.d(TAG, "hasFocusPermission check failed: $e")
             false
         }
     }

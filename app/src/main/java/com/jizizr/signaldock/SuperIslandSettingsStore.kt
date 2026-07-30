@@ -11,6 +11,7 @@ object SuperIslandSettingsStore {
     private const val KEY_NETWORK_BYPASS_MODE = "network_bypass_mode"
     private const val KEY_NETWORK_BYPASS_DURATION_MS = "network_bypass_duration_ms"
     private const val KEY_SHARE_CONTENT_TEMPLATE = "share_content_template"
+    private const val KEY_OUTER_GLOW_ENABLED = "outer_glow_enabled"
 
     val defaultShareTemplate = IslandShareTemplate(
         title = "{商家}",
@@ -60,6 +61,10 @@ object SuperIslandSettingsStore {
                 value.coerceIn(NetworkBypassMode.MIN_DURATION_MS, NetworkBypassMode.MAX_DURATION_MS),
             )
         }
+
+    var outerGlowEnabled: Boolean
+        get() = prefs.getBoolean(KEY_OUTER_GLOW_ENABLED, false)
+        set(value) = prefs.edit { putBoolean(KEY_OUTER_GLOW_ENABLED, value) }
 
     val shareTemplate: IslandShareTemplate
         get() = defaultShareTemplate.copy(

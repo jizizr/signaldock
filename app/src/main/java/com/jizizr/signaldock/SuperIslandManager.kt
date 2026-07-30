@@ -8,7 +8,6 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.drawable.Icon
 import android.os.Bundle
-import android.util.Log
 import org.json.JSONObject
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
@@ -79,7 +78,7 @@ object SuperIslandManager : SessionNotificationManager {
             xmsfUid = context.packageManager.getPackageUid(XMSF_PKG, 0)
             xmsfUid
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to get UID for $XMSF_PKG", e)
+            AppLog.e(TAG, "Failed to get UID for $XMSF_PKG", e)
             -1
         }
     }
@@ -92,7 +91,7 @@ object SuperIslandManager : SessionNotificationManager {
         }
         val uid = getXmsfUid(context)
         if (uid == -1) {
-            Log.w(TAG, "withBypass: failed to get xmsf uid, skipping bypass")
+            AppLog.w(TAG, "withBypass: failed to get xmsf uid, skipping bypass")
             block()
             return
         }
@@ -117,7 +116,7 @@ object SuperIslandManager : SessionNotificationManager {
 
     private fun executeBypass(uid: Int, block: () -> Unit) {
         if (!AppShell.isShizukuAvailable) {
-            Log.w(TAG, "Shizuku unavailable; sending notification without bypass")
+            AppLog.w(TAG, "Shizuku unavailable; sending notification without bypass")
             block()
             return
         }
@@ -134,9 +133,9 @@ object SuperIslandManager : SessionNotificationManager {
             }
         } catch (interrupted: InterruptedException) {
             Thread.currentThread().interrupt()
-            Log.w(TAG, "Bypass worker interrupted", interrupted)
+            AppLog.w(TAG, "Bypass worker interrupted", interrupted)
         } catch (error: Throwable) {
-            Log.e(TAG, "Bypass notification failed", error)
+            AppLog.e(TAG, "Bypass notification failed", error)
         } finally {
             if (networkBlockAttempted) {
                 restoreXmsfNetworking(uid)
@@ -156,11 +155,11 @@ object SuperIslandManager : SessionNotificationManager {
             val error = AppShell.setPackageNetworkingEnabled(uid, enabled)
             if (error == null) return true
             lastError = error
-            Log.w(TAG, "XMSF network ${if (enabled) "restore" else "block"} failed " +
+            AppLog.w(TAG, "XMSF network ${if (enabled) "restore" else "block"} failed " +
                 "(${attempt + 1}/$MAX_NETWORK_RETRIES): $error")
             if (attempt + 1 < MAX_NETWORK_RETRIES) Thread.sleep(NETWORK_RETRY_DELAY_MS)
         }
-        Log.e(TAG, "XMSF network operation failed: $lastError")
+        AppLog.e(TAG, "XMSF network operation failed: $lastError")
         return false
     }
 
@@ -170,7 +169,7 @@ object SuperIslandManager : SessionNotificationManager {
             networkBlockActive.set(false)
             blockedUid = -1
         } else {
-            Log.e(TAG, "XMSF network restore failed; leaving diagnostic state active")
+            AppLog.e(TAG, "XMSF network restore failed; leaving diagnostic state active")
         }
     }
 
@@ -219,6 +218,7 @@ object SuperIslandManager : SessionNotificationManager {
         dragShareTitle: String = "",
         dragShareDescription: String = "",
         dragShareContent: String = "",
+        statusOnly: Boolean = false,
     ): Notification {
         ensureChannels(context)
         val appIcon = sourceIcon
@@ -232,20 +232,20 @@ object SuperIslandManager : SessionNotificationManager {
         }
 
         // ── 展开态：文本组件2 (baseInfo) ──
-        val productText = islandProductTexts(title, content, itemTitle, itemSubtitle, merchant)
         val displayKeyText = keyText.ifBlank { title }
+        val productText = islandProductTexts(title, content, itemTitle, itemSubtitle, merchant)
         val displayPrice = price.trim().take(8)
         val baseInfo = JSONObject().apply {
             put("type", 2)
-            put("title", productText.title)
-            put("content", productText.merchant)
+            put("title", if (statusOnly) displayKeyText else productText.title)
+            put("content", if (statusOnly) content else productText.merchant)
             put("colorTitle", "#000000")
             put("colorTitleDark", "#FFFFFF")
             put("colorContent", "#666666")
             put("colorContentDark", "#B8B8B8")
             put("showDivider", false)
             put("showContentDivider", false)
-            if (productText.detail.isNotBlank()) {
+            if (!statusOnly && productText.detail.isNotBlank()) {
                 put("specialTitle", productText.detail)
                 put("colorSpecialTitle", "#2F80ED")
                 put("colorSpecialTitleDark", "#79B8FF")
@@ -318,9 +318,36 @@ object SuperIslandManager : SessionNotificationManager {
                 put("showHighlightColor", false)
             })
         }
-        val bigIslandArea = JSONObject().apply {
-            put("imageTextInfoLeft", imageTextInfoLeft)
-            put("imageTextInfoRight", imageTextInfoRight)
+        val bigIslandArea = if (statusOnly) {
+            // Xiaomi's image-text island keeps the icon and the two-line text in separate
+            // protocol components. Putting textInfo beside picInfo in the left component
+            // makes HyperOS silently discard both on some versions.
+            JSONObject().apply {
+                put("imageTextInfoLeft", JSONObject().apply {
+                    put("type", 1)
+                    put("picInfo", JSONObject().apply {
+                        put("type", 1)
+                        put("pic", "miui.focus.pic_icon")
+                    })
+                })
+                put("imageTextInfoRight", JSONObject().apply {
+                    put("type", 3)
+                    put("textInfo", JSONObject().apply {
+                        put("title", displayKeyText)
+                        put("content", content)
+                        put("colorTitle", "#FFFFFF")
+                        put("colorContent", "#B8B8B8")
+                        put("turnAnim", false)
+                        put("narrowFont", false)
+                        put("showHighlightColor", false)
+                    })
+                })
+            }
+        } else {
+            JSONObject().apply {
+                put("imageTextInfoLeft", imageTextInfoLeft)
+                put("imageTextInfoRight", imageTextInfoRight)
+            }
         }
 
         val paramIsland = JSONObject().apply {
@@ -350,12 +377,17 @@ object SuperIslandManager : SessionNotificationManager {
             put("updatable", updatable)
             put("ticker", ticker)
             put("tickerPic", "miui.focus.pic_ticker")
+            if (SuperIslandSettingsStore.outerGlowEnabled) {
+                put("outEffectSrc", "outer_glow")
+            }
             put("isShowNotification", true)
             put("islandFirstFloat", true)
             put("timeout", islandTimeout)
             put("baseInfo", baseInfo)       // 商品名 + 同行规格标签 + 商家
-            put("picInfo", expandPicInfo)   // 右侧商家 Logo
-            put("hintInfo", hintInfo)       // 取餐码 + 价格标签 + 完成按钮
+            if (!statusOnly) {
+                put("picInfo", expandPicInfo)   // 右侧商家 Logo
+                put("hintInfo", hintInfo)       // 取餐码 + 价格标签 + 完成按钮
+            }
             put("param_island", paramIsland)
         }
 
@@ -363,10 +395,14 @@ object SuperIslandManager : SessionNotificationManager {
             put("param_v2", paramV2)
         }
 
-        Log.d(
+        AppLog.d(
             TAG,
-            "Building template 10: protocol=1 baseInfo + hintInfo " +
-                "sourceIcon=${sourceIcon != null}",
+            if (statusOnly) {
+                "Building single-area status island"
+            } else {
+                "Building template 10: protocol=1 baseInfo + hintInfo " +
+                    "sourceIcon=${sourceIcon != null}"
+            },
         )
 
         // ── 组装 extras Bundle ──
@@ -451,12 +487,12 @@ object SuperIslandManager : SessionNotificationManager {
                     ),
                 )
                 notificationManager.notify(notificationId, notification)
-                Log.i(TAG, "Test island notification sent with fresh id=$notificationId")
+                AppLog.i(TAG, "Test island notification sent with fresh id=$notificationId")
             }
 
             "超级岛通知已发送"
         } catch (e: Exception) {
-            Log.e(TAG, "sendTestIslandNotification failed", e)
+            AppLog.e(TAG, "sendTestIslandNotification failed", e)
             "发送失败: ${e.message}"
         }
     }
@@ -488,22 +524,21 @@ object SuperIslandManager : SessionNotificationManager {
             val nm = context.getSystemService(NotificationManager::class.java)
             val notification = buildIslandNotification(
                 context = context,
-                title = "正在识别",
-                content = "截图分析中，请稍候…",
-                ticker = "信岛 · 识别中",
+                title = "识别中",
+                content = "正在分析截图",
+                ticker = "识别中",
                 keyText = "识别中",
                 ongoing = false,
                 updatable = true,
                 islandTimeout = 120,
-                expandedTime = 5,
-                actionTitle = "取消",
-                actionPendingIntent = dismissPI,
+                expandedTime = 0,
                 deleteIntent = dismissPI,
                 sourceIcon = SourceIconCache.iconFor(sessionId),
+                statusOnly = true,
             )
             nm.notify(islandId, notification)
             onForegroundReady(islandId, notification)
-            Log.i(TAG, "Recognizing island sent for session $sessionId (id=$islandId)")
+            AppLog.i(TAG, "Recognizing island sent for session $sessionId (id=$islandId)")
         }
     }
 
@@ -627,7 +662,7 @@ object SuperIslandManager : SessionNotificationManager {
                 dragShareContent = share.content.ifBlank { displayContent },
             )
             nm.notify(islandId, notification)
-            Log.i(TAG, "Result island sent for session $sessionId (id=$islandId)")
+            AppLog.i(TAG, "Result island sent for session $sessionId (id=$islandId)")
         }
     }
 

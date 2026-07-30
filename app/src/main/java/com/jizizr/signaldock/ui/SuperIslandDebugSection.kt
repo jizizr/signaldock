@@ -57,6 +57,9 @@ internal fun SuperIslandDebugSection(
     var networkBypassMode by remember {
         mutableStateOf(SuperIslandSettingsStore.networkBypassMode)
     }
+    var outerGlowEnabled by remember {
+        mutableStateOf(SuperIslandSettingsStore.outerGlowEnabled)
+    }
     var showDurationDialog by remember { mutableStateOf(false) }
     var durationDraft by remember {
         mutableStateOf(SuperIslandSettingsStore.networkBypassDurationMs.toString())
@@ -102,6 +105,16 @@ internal fun SuperIslandDebugSection(
             )
         }
     }
+
+    SwitchPreference(
+        checked = outerGlowEnabled,
+        onCheckedChange = { enabled ->
+            outerGlowEnabled = enabled
+            SuperIslandSettingsStore.outerGlowEnabled = enabled
+        },
+        title = stringResource(R.string.super_island_outer_glow),
+        summary = stringResource(R.string.super_island_outer_glow_summary),
+    )
 
     ArrowPreference(
         title = stringResource(R.string.super_island_share_template),

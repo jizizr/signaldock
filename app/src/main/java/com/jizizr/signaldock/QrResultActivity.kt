@@ -2,7 +2,6 @@ package com.jizizr.signaldock
 
 import android.content.Intent
 import android.os.Bundle
-import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -69,7 +68,7 @@ class QrResultActivity : ComponentActivity() {
         val bitmap = if (sessionId != -1) SessionQrBitmapStore.bitmapFor(sessionId) else null
         val mode = intent.getStringExtra(EXTRA_MODE)
 
-        Log.i(
+        AppLog.i(
             TAG,
             "Opened: session=$sessionId mode=$mode multiWindow=$isInMultiWindowMode " +
                 "hasQr=${bitmap != null}",
@@ -150,7 +149,7 @@ class QrResultActivity : ComponentActivity() {
     private fun openSourceApplication() {
         val sourceTaskId = intent.getIntExtra(EXTRA_SOURCE_TASK_ID, -1)
         if (AppShell.startActivityFromRecents(sourceTaskId)) {
-            Log.i(TAG, "Restored source task: taskId=$sourceTaskId")
+            AppLog.i(TAG, "Restored source task: taskId=$sourceTaskId")
             finish()
             return
         }
@@ -161,7 +160,7 @@ class QrResultActivity : ComponentActivity() {
         launchIntent.addFlags(
             Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED,
         )
-        Log.i(TAG, "Launching source package: package=$sourcePackage")
+        AppLog.i(TAG, "Launching source package: package=$sourcePackage")
         startActivity(launchIntent)
         finish()
     }

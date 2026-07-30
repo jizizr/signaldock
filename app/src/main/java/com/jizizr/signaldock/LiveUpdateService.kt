@@ -5,7 +5,6 @@ import android.app.Service
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.IBinder
-import android.util.Log
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -67,7 +66,7 @@ class LiveUpdateService : Service() {
             ACTION_STOP -> {
                 val sessionId = intent.getIntExtra(EXTRA_SESSION_ID, -1)
                 if (sessionId != -1) {
-                    Log.d(TAG, "Stopping session $sessionId")
+                    AppLog.d(TAG, "Stopping session $sessionId")
                     provider.cancelForSession(this, sessionId)
                     activeSessions.remove(sessionId)
                     SessionQrBitmapStore.remove(sessionId)
