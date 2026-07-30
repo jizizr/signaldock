@@ -5,7 +5,6 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
-import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -42,7 +41,7 @@ class MainActivity : ComponentActivity() {
     private val requestNotificationPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             notificationGranted = granted
-            Log.i(TAG, "POST_NOTIFICATIONS granted=$granted")
+            AppLog.i(TAG, "POST_NOTIFICATIONS granted=$granted")
         }
 
     // ── Shizuku 监听 ────────────────────────────────────────────────────────
@@ -85,7 +84,7 @@ class MainActivity : ComponentActivity() {
             shizukuPermissionPending = false
             shizukuPermissionDenied = false
         }
-        Log.i(TAG, "Shizuku state available=$available granted=$granted uid=${shizuku.uid}")
+        AppLog.i(TAG, "Shizuku state available=$available granted=$granted uid=${shizuku.uid}")
     }
 
     private fun requestShizukuPermission() {
@@ -98,7 +97,7 @@ class MainActivity : ComponentActivity() {
         runCatching { Shizuku.requestPermission(SHIZUKU_REQUEST_CODE) }
             .onFailure { error ->
                 shizukuPermissionPending = false
-                Log.e(TAG, "Failed to request Shizuku permission", error)
+                AppLog.e(TAG, "Failed to request Shizuku permission", error)
             }
     }
 
@@ -136,7 +135,9 @@ class MainActivity : ComponentActivity() {
         setContent {
             SignaldockTheme {
                 // rememberSaveable：深浅色切换/旋转等配置变更重建 Activity 时不重播开屏动画
-                var showSplash by rememberSaveable { mutableStateOf(true) }
+                var showSplash by rememberSaveable {
+                    mutableStateOf(AppUiSettingsStore.splashAnimationEnabled)
+                }
                 if (showSplash) {
                     SplashScreen(onFinished = { showSplash = false })
                 } else if (!shizuku.ready) {

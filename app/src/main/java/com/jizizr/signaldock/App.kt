@@ -23,6 +23,7 @@ class App : Application() {
         // minSdk=36 >= P(28), always apply bypass
         HiddenApiBypass.addHiddenApiExemptions("")
         // 初始化 AI 参数持久化存储
+        AppUiSettingsStore.init(this)
         AiSettingsStore.init(this)
         MiclawSessionStore.init(this)
         SuperIslandSettingsStore.init(this)
