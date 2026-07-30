@@ -409,7 +409,10 @@ pub async fn analyze_screenshot_with_miclaw(
         started.elapsed().as_millis()
     );
 
-    parse_island_info(&assistant_text_from_response(&text)?)
+    let assistant_text = assistant_text_from_response(&text)
+        .map_err(|error| AiError::InvalidResponse(format!("Miclaw envelope: {error}")))?;
+    parse_island_info(&assistant_text)
+        .map_err(|error| AiError::InvalidResponse(format!("Miclaw model output: {error}")))
 }
 
 /// Parses the final text returned by either an OpenAI-compatible model or Miclaw.

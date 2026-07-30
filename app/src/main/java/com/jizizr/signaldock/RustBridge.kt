@@ -2,7 +2,6 @@
 
 import android.graphics.Bitmap
 import android.os.SystemClock
-import android.util.Log
 import org.json.JSONObject
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.Executors
@@ -21,9 +20,9 @@ object RustBridge {
     init {
         try {
             System.loadLibrary("liveupdate_core")
-            Log.i(TAG, "liveupdate_core loaded successfully")
+            AppLog.i(TAG, "liveupdate_core loaded successfully")
         } catch (e: UnsatisfiedLinkError) {
-            Log.e(TAG, "Failed to load liveupdate_core: ${e.message}")
+            AppLog.e(TAG, "Failed to load liveupdate_core: ${e.message}")
         }
     }
 
@@ -84,7 +83,7 @@ object RustBridge {
         return try {
             val json = if (settings.usesMiclaw) {
                 if (settings.miclawUseExternalAgent) {
-                    Log.i(TAG, "AI request: provider=Miclaw, transport=external-agent")
+                    AppLog.i(TAG, "AI request: provider=Miclaw, transport=external-agent")
                     val qrFuture = nativeImageFuture.thenApplyAsync(
                         { image -> detectQrNative(image.rgba, image.width, image.height) },
                         preprocessingExecutor,
@@ -106,13 +105,13 @@ object RustBridge {
                         session = MiclawPassportClient.refresh(session)
                         MiclawSessionStore.save(session)
                     }
-                    Log.i(
+                    AppLog.i(
                         TAG,
                         "AI request: provider=Miclaw, transport=direct-api, thinking=${settings.miclawThinkingEnabled}",
                     )
                     val image = nativeImageFuture.join()
                     val jpegB64 = jpegFuture.join()
-                    Log.i(
+                    AppLog.i(
                         TAG,
                         "Image preprocessing ready: ${SystemClock.elapsedRealtime() - preprocessingStartedAtMs}ms",
                     )
@@ -123,17 +122,22 @@ object RustBridge {
                         settings.miclawThinkingEnabled,
                         jpegB64,
                     )
-                    if (JSONObject(directJson).optString("error").contains("Miclaw HTTP 401")) {
-                        session = if (session.canRefresh) {
-                            Log.i(TAG, "Miclaw token expired; refreshing with encrypted passToken")
-                            MiclawPassportClient.refresh(session).also(MiclawSessionStore::save)
-                        } else if (AppShell.isShizukuRoot) {
-                            Log.i(TAG, "Miclaw token expired; refreshing through system Xiaomi account")
-                            MiclawCredentialImporter.importFromSystemAccount(
-                                context.applicationContext,
-                                forceRefresh = true,
-                            ).getOrThrow()
-                        } else {
+                    if (isMiclawUnauthorizedDiagnostic(JSONObject(directJson).optString("debugError"))) {
+                        session = runCatching {
+                            if (session.canRefresh) {
+                                AppLog.i(TAG, "Miclaw token expired; refreshing with encrypted passToken")
+                                MiclawPassportClient.refresh(session).also(MiclawSessionStore::save)
+                            } else if (AppShell.isShizukuRoot) {
+                                AppLog.i(TAG, "Miclaw token expired; refreshing through system Xiaomi account")
+                                MiclawCredentialImporter.importFromSystemAccount(
+                                    context.applicationContext,
+                                    forceRefresh = true,
+                                ).getOrThrow()
+                            } else {
+                                error("Miclaw session has no refresh credentials")
+                            }
+                        }.getOrElse { error ->
+                            AppLog.e(TAG, "Miclaw session refresh failed: ${error.message}")
                             error("Miclaw 登录已失效，请重新登录")
                         }
                         directJson = analyzeMiclawDirectNative(
@@ -143,6 +147,10 @@ object RustBridge {
                             settings.miclawThinkingEnabled,
                             jpegB64,
                         )
+                        if (isMiclawUnauthorizedDiagnostic(JSONObject(directJson).optString("debugError"))) {
+                            AppLog.e(TAG, "Miclaw request remained unauthorized after refresh")
+                            error("Miclaw 登录已失效，请重新登录")
+                        }
                     }
                     directJson
                 }
@@ -152,10 +160,10 @@ object RustBridge {
                     preprocessingExecutor,
                 )
                 val connection = settings.connection
-                Log.i(TAG, "AI request: model=${connection.modelId}, endpoint=${connection.baseUrl}")
+                AppLog.i(TAG, "AI request: provider=Custom, transport=openai-compatible")
                 val image = nativeImageFuture.join()
                 val jpegB64 = jpegFuture.join()
-                Log.i(
+                AppLog.i(
                     TAG,
                     "Image preprocessing ready: ${SystemClock.elapsedRealtime() - preprocessingStartedAtMs}ms",
                 )
@@ -168,10 +176,21 @@ object RustBridge {
                     jpegB64,
                 )
             }
-            parseNotificationData(json)
+            parseNotificationData(json).also { result ->
+                AppLog.i(
+                    TAG,
+                    "AI result: success=${result.error.isBlank()} qrFound=${result.qrFound} " +
+                        "hasPrice=${result.price.isNotBlank()} " +
+                        "hasItemDetail=${result.itemDetail.isNotBlank()}",
+                )
+            }
         } catch (e: Exception) {
-            Log.e(TAG, "analyzeScreenshot failed: ${e.message}")
-            NotificationData(title = "截图分析失败", body = e.message ?: "")
+            AppLog.e(TAG, "analyzeScreenshot failed: ${e.message}")
+            NotificationData(
+                title = "截图分析失败",
+                body = e.message ?: "",
+                error = e.message ?: e.javaClass.simpleName,
+            )
         }
     }
 
@@ -192,6 +211,11 @@ object RustBridge {
     private fun parseNotificationData(json: String): NotificationData {
         return try {
             val obj = JSONObject(json)
+            obj.optString("debugError")
+                .takeIf(String::isNotBlank)
+                ?.let { diagnosticError ->
+                    AppLog.e(TAG, "AI technical failure: $diagnosticError")
+                }
             NotificationData(
                 title          = obj.optString("title", ""),
                 body           = obj.optString("body", ""),
@@ -210,8 +234,12 @@ object RustBridge {
                 error          = obj.optString("error", "")
             )
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to parse AI response (${json.length} chars)", e)
-            NotificationData(title = "", body = "")
+            AppLog.e(TAG, "Failed to parse AI response (${json.length} chars)", e)
+            NotificationData(
+                title = "识别结果解析失败",
+                body = e.message.orEmpty(),
+                error = e.message ?: e.javaClass.simpleName,
+            )
         }
     }
 
@@ -235,3 +263,6 @@ object RustBridge {
         val error: String = ""
     )
 }
+
+internal fun isMiclawUnauthorizedDiagnostic(diagnosticError: String): Boolean =
+    diagnosticError == "miclaw_http_401"

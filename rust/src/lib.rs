@@ -54,6 +54,9 @@ struct AnalysisResult {
     merchant: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
+    /// Sanitized failure category for local diagnostics. Never contains response bodies or credentials.
+    #[serde(rename = "debugError", skip_serializing_if = "Option::is_none")]
+    debug_error: Option<String>,
 }
 
 // ------------------------------------------------------------------------------
@@ -360,12 +363,14 @@ fn combine_results(qr: QrResult, ai_res: Result<ai::IslandInfo, ai::AiError>) ->
                 item_detail: Some(item_detail),
                 merchant: Some(info.merchant),
                 error: None,
+                debug_error: None,
             }
         }
         Err(e) => {
+            let debug_error = diagnostic_ai_error(&e);
             let error = e.to_string();
             let message = user_facing_ai_error(&error).to_owned();
-            log::error!("AI analysis failed: {}", message);
+            log::error!("AI analysis failed: {} ({})", message, debug_error);
             AnalysisResult {
                 title: "识别失败".to_owned(),
                 body: message.clone(),
@@ -380,6 +385,7 @@ fn combine_results(qr: QrResult, ai_res: Result<ai::IslandInfo, ai::AiError>) ->
                 item_detail: None,
                 merchant: None,
                 error: Some(message),
+                debug_error: Some(debug_error),
             }
         }
     }
@@ -400,6 +406,40 @@ fn user_facing_ai_error(error: &str) -> &'static str {
         "当前模型无权访问"
     } else {
         "AI 识别暂时不可用"
+    }
+}
+
+fn diagnostic_ai_error(error: &ai::AiError) -> String {
+    match error {
+        ai::AiError::Client(message) => {
+            if let Some(status) = message
+                .strip_prefix("Miclaw HTTP ")
+                .and_then(|rest| rest.split(':').next())
+                .filter(|status| status.chars().all(|char| char.is_ascii_digit()))
+            {
+                format!("miclaw_http_{status}")
+            } else if message.contains("Miclaw request failed") {
+                "miclaw_network_request_failed".to_owned()
+            } else if message.contains("Miclaw response read failed") {
+                "miclaw_response_read_failed".to_owned()
+            } else if message.contains("serviceToken is empty") {
+                "miclaw_service_token_empty".to_owned()
+            } else {
+                "miclaw_client_error".to_owned()
+            }
+        }
+        ai::AiError::Parse(_) => "miclaw_json_parse_failed".to_owned(),
+        ai::AiError::InvalidResponse(message) => {
+            if message.starts_with("Miclaw envelope") {
+                "miclaw_response_envelope_invalid".to_owned()
+            } else if message.starts_with("Miclaw model output") {
+                "miclaw_model_json_invalid".to_owned()
+            } else if message.contains("no assistant text") {
+                "miclaw_response_missing_assistant_text".to_owned()
+            } else {
+                "miclaw_invalid_response".to_owned()
+            }
+        }
     }
 }
 

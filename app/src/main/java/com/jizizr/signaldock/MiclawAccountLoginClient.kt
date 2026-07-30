@@ -7,7 +7,6 @@ import java.net.URI
 import java.net.URL
 import java.net.URLEncoder
 import java.security.MessageDigest
-import android.util.Log
 import org.json.JSONObject
 
 /** Stateful Xiaomi Passport login flow for non-root users. */
@@ -44,7 +43,7 @@ class MiclawAccountLoginClient {
         ).json()
 
         body.optString("captchaUrl").takeIf { it.isNotBlank() && it != "null" }?.let { path ->
-            Log.i(TAG, "Xiaomi login requires captcha")
+            AppLog.i(TAG, "Xiaomi login requires captcha")
             val imageUrl = resolve(ACCOUNT_HOST, path)
             return Outcome.CaptchaRequired(request(imageUrl).body)
         }
@@ -61,16 +60,16 @@ class MiclawAccountLoginClient {
                 }.filter { it > 0 }
             }.orEmpty()
             check(options.isNotEmpty()) { "小米账号未返回可用的二次验证方式" }
-            Log.i(TAG, "Xiaomi login requires 2FA options=$options")
+            AppLog.i(TAG, "Xiaomi login requires 2FA options=$options")
             return Outcome.TwoFactorRequired(options)
         }
 
         val code = body.optInt("code", -1)
         if (code != 0) {
-            Log.w(TAG, "Xiaomi login rejected code=$code")
+            AppLog.w(TAG, "Xiaomi login rejected code=$code")
             return Outcome.Failed(errorMessage(body, "登录失败", code))
         }
-        Log.i(TAG, "Xiaomi password login accepted; exchanging osbotapi token")
+        AppLog.i(TAG, "Xiaomi password login accepted; exchanging osbotapi token")
         return Outcome.Authenticated(refreshSession(body))
     }
 
@@ -82,7 +81,7 @@ class MiclawAccountLoginClient {
         ).json()
         val code = response.optInt("code", -1)
         check(code == 0) { errorMessage(response, "发送验证码失败", code) }
-        Log.i(TAG, "Xiaomi 2FA ticket sent flag=$flag")
+        AppLog.i(TAG, "Xiaomi 2FA ticket sent flag=$flag")
     }
 
     fun verifyTicket(flag: Int, ticket: String): MiclawSession {
@@ -118,7 +117,7 @@ class MiclawAccountLoginClient {
         check(authenticatedCode == 0) {
             errorMessage(authenticated, "二次验证后的登录失败", authenticatedCode)
         }
-        Log.i(TAG, "Xiaomi 2FA accepted; exchanging osbotapi token")
+        AppLog.i(TAG, "Xiaomi 2FA accepted; exchanging osbotapi token")
         return refreshSession(authenticated)
     }
 
@@ -252,6 +251,7 @@ class MiclawAccountLoginClient {
         fun JSONObject.valueAsString(key: String): String = when (val value = opt(key)) {
             is String -> value
             is Number -> value.toString()
+            null -> ""
             else -> ""
         }
     }
