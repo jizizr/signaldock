@@ -227,6 +227,21 @@ internal fun resolveAiConnectionConfiguration(
     )
 }
 
+internal fun isAiConfigurationReady(
+    usesMiclaw: Boolean,
+    miclawUseExternalAgent: Boolean,
+    miclawSessionAvailable: Boolean,
+    apiKey: String,
+    connection: AiConnectionConfiguration,
+): Boolean = if (usesMiclaw) {
+    miclawUseExternalAgent || miclawSessionAvailable
+} else {
+    apiKey.isNotBlank() &&
+        (connection.baseUrl.startsWith("https://") ||
+            connection.baseUrl.startsWith("http://")) &&
+        connection.modelId.isNotBlank()
+}
+
 internal fun legacyCustomConfigurationOrNull(
     selectedPresetId: String,
     baseUrl: String,

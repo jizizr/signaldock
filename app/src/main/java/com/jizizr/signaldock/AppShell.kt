@@ -11,7 +11,6 @@ import android.os.IBinder
 import android.os.Looper
 import android.os.Bundle
 import android.provider.Settings
-import android.util.Log
 import androidx.core.graphics.scale
 import rikka.shizuku.Shizuku
 import rikka.shizuku.ShizukuBinderWrapper
@@ -103,10 +102,10 @@ object AppShell {
                 cm.setUidFirewallRule(chain, uid, rule)
                 // Do not disable the entire chain when restoring a single app
             }
-            Log.d(TAG, "Network ${if (enabled) "RESTORED" else "BLOCKED"} for uid=$uid")
+            AppLog.d(TAG, "Network ${if (enabled) "RESTORED" else "BLOCKED"} for uid=$uid")
             null // Success
         } catch (t: Throwable) {
-            Log.e(TAG, "setPackageNetworkingEnabled failed", t)
+            AppLog.e(TAG, "setPackageNetworkingEnabled failed", t)
             t.stackTraceToString()
         }
     }
@@ -122,7 +121,7 @@ object AppShell {
     @Suppress("DEPRECATION")
     fun findWechatMiniProgramTask(): WechatMiniProgramTask? {
         if (!isShizukuAvailable) {
-            Log.w(TAG, "Cannot read recent tasks: Shizuku unavailable")
+            AppLog.w(TAG, "Cannot read recent tasks: Shizuku unavailable")
             return null
         }
 
@@ -151,7 +150,7 @@ object AppShell {
 
             for (item in tasks) {
                 val task = item as? ActivityManager.RecentTaskInfo ?: continue
-                val component = task.topActivity ?: task.baseActivity ?: task.baseIntent?.component
+                val component = task.topActivity ?: task.baseActivity ?: task.baseIntent.component
                 if (component?.packageName != WECHAT_PACKAGE ||
                     !component.className.contains(WECHAT_APP_BRAND_ACTIVITY)
                 ) {
@@ -184,7 +183,7 @@ object AppShell {
                     ?.let { copy ->
                         copy.scale(128, 128).also { if (it !== copy) copy.recycle() }
                     }
-                Log.i(
+                AppLog.i(
                     TAG,
                     "Found WeChat mini-program recent task " +
                         "taskId=${task.taskId} component=${component.className} icon=${scaled != null}",
@@ -192,10 +191,10 @@ object AppShell {
                 return WechatMiniProgramTask(task.taskId, scaled)
             }
 
-            Log.w(TAG, "No WeChat mini-program task with an icon found in Recents")
+            AppLog.w(TAG, "No WeChat mini-program task with an icon found in Recents")
             null
         } catch (error: Throwable) {
-            Log.e(TAG, "Failed to read WeChat mini-program icon from Recents", error)
+            AppLog.e(TAG, "Failed to read WeChat mini-program icon from Recents", error)
             null
         }
     }
@@ -219,10 +218,10 @@ object AppShell {
                     candidate.parameterTypes[1] == Bundle::class.java
             }
             val result = method.invoke(taskManager, taskId, null) as? Int ?: -1
-            Log.i(TAG, "startActivityFromRecents taskId=$taskId result=$result")
+            AppLog.i(TAG, "startActivityFromRecents taskId=$taskId result=$result")
             result >= 0
         } catch (error: Throwable) {
-            Log.e(TAG, "Unable to restore recent task $taskId", error)
+            AppLog.e(TAG, "Unable to restore recent task $taskId", error)
             false
         }
     }
@@ -269,7 +268,7 @@ object AppShell {
 
                 mainHandler.post { onDone(true) }
             } catch (e: Exception) {
-                Log.e(TAG, "enableAccessibility failed", e)
+                AppLog.e(TAG, "enableAccessibility failed", e)
                 mainHandler.post { onDone(false) }
             }
         }

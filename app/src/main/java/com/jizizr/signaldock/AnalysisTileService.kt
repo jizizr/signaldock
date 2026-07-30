@@ -1,11 +1,16 @@
 ﻿package com.jizizr.signaldock
 
+import android.Manifest
+import android.app.PendingIntent
+import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.service.quicksettings.Tile
 import android.service.quicksettings.TileService
-import android.util.Log
+import android.widget.Toast
+import java.util.concurrent.atomic.AtomicBoolean
 import rikka.shizuku.Shizuku
 
 /**
@@ -13,11 +18,10 @@ import rikka.shizuku.Shizuku
  *
  * 点击后执行一次动作，不保持后台状态。
  *
- * 截图优先级（全程静默，不跳转 MainActivity）：
+ * 截图优先级：
  *   ① 无障碍截图服务已运行  unlockAndRun  延迟截图
- *   ② Shell 已连接  后台开启无障碍  截图
- *   ③ Shizuku 已授权但未绑定  按需绑定  → ②
- *   ④ Shizuku 未授权  弹授权对话框
+ *   ② Shizuku 已授权  后台开启无障碍  截图
+ *   ③ 权限、AI 配置或 Shizuku 不可用  显示原因并打开主页修复
  *
  * 连接管理完全委托给 [AppShell]，本 Tile 不持有任何 ServiceConnection，
  * 因此不会产生孤立的 :shell 进程。
@@ -26,28 +30,15 @@ class AnalysisTileService : TileService() {
 
     companion object {
         private const val TAG = "AnalysisTileService"
-        private const val SHIZUKU_REQUEST_CODE = 201
-        private const val PANEL_MIN_CLOSE_DELAY_MS = 250L
-        private const val PANEL_MAX_CLOSE_DELAY_MS = 500L
-        private const val PANEL_READY_POLL_MS = 50L
+        private const val UNLOCK_CALLBACK_TIMEOUT_MS = 1500L
     }
 
     // -----------------------------------------------------------------------
     //  Shizuku 事件监听（仅在面板展开时注册，面板收起时移除）
     // -----------------------------------------------------------------------
 
-    private val shizukuPermListener =
-        Shizuku.OnRequestPermissionResultListener { code, result ->
-            if (code == SHIZUKU_REQUEST_CODE &&
-                result == android.content.pm.PackageManager.PERMISSION_GRANTED
-            ) {
-                // 授权刚完成，触发截图
-                enableAccessibilityAndShoot()
-            }
-        }
-
     private val shizukuBinderReceived = Shizuku.OnBinderReceivedListener { updateTileLabel() }
-    private val shizukuBinderDead     = Shizuku.OnBinderDeadListener     { updateTileLabel() }
+    private val shizukuBinderDead = Shizuku.OnBinderDeadListener { updateTileLabel() }
     private val mainHandler = Handler(Looper.getMainLooper())
     @Volatile
     private var pendingTapStartedAtMs = 0L
@@ -60,29 +51,74 @@ class AnalysisTileService : TileService() {
         super.onStartListening()
         Shizuku.addBinderReceivedListenerSticky(shizukuBinderReceived)
         Shizuku.addBinderDeadListener(shizukuBinderDead)
-        Shizuku.addRequestPermissionResultListener(shizukuPermListener)
         updateTileLabel()
     }
 
     override fun onStopListening() {
         Shizuku.removeBinderReceivedListener(shizukuBinderReceived)
         Shizuku.removeBinderDeadListener(shizukuBinderDead)
-        Shizuku.removeRequestPermissionResultListener(shizukuPermListener)
         super.onStopListening()
     }
 
     override fun onClick() {
         super.onClick()
         pendingTapStartedAtMs = SystemClock.elapsedRealtime()
-        unlockAndRun(::handleTileClick)
+        AppLog.i(TAG, "Tile clicked")
+        setTileLabel("正在启动…")
+        val actionHandled = AtomicBoolean(false)
+        val action = Runnable {
+            if (!actionHandled.compareAndSet(false, true)) return@Runnable
+            runCatching(::handleTileClick)
+                .onFailure { error ->
+                    AppLog.e(TAG, "Tile action failed", error)
+                    openMainApp(R.string.tile_action_failed)
+                }
+        }
+        mainHandler.postDelayed({
+            if (actionHandled.compareAndSet(false, true)) {
+                AppLog.w(TAG, "unlockAndRun callback timed out")
+                openMainApp(R.string.tile_action_failed)
+            }
+        }, UNLOCK_CALLBACK_TIMEOUT_MS)
+        runCatching {
+            unlockAndRun(action)
+        }.onFailure { error ->
+            AppLog.e(TAG, "Unable to collapse Quick Settings", error)
+            if (actionHandled.compareAndSet(false, true)) {
+                openMainApp(R.string.tile_action_failed)
+            }
+        }
     }
 
     private fun handleTileClick() {
-        Log.d(
+        AppLog.d(
             TAG,
             "Tile unlocked  a11y=${AccessibilityScreenshotService.instance != null} " +
                 "shell=${AppShell.isShizukuAvailable}",
         )
+
+        if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            openMainApp(R.string.tile_notification_permission_required)
+            return
+        }
+
+        val aiSettings = AiSettingsStore.runtimeSnapshot()
+        val miclawSessionAvailable = runCatching {
+            MiclawSessionStore.load()?.isUsable == true
+        }.getOrDefault(false)
+        if (!isAiConfigurationReady(
+                usesMiclaw = aiSettings.usesMiclaw,
+                miclawUseExternalAgent = aiSettings.miclawUseExternalAgent,
+                miclawSessionAvailable = miclawSessionAvailable,
+                apiKey = aiSettings.apiKey,
+                connection = aiSettings.connection,
+            )
+        ) {
+            openMainApp(R.string.tile_ai_configuration_required)
+            return
+        }
 
         val a11ySvc = AccessibilityScreenshotService.instance
 
@@ -99,13 +135,12 @@ class AnalysisTileService : TileService() {
                 enableAccessibilityAndShoot()
             }
 
-            // ④ Shizuku 可用但未授权 → 弹授权对话框
+            // Shizuku 可用但未授权：由主页的稳定授权流程处理。
             shizukuAvailable() -> {
-                Shizuku.requestPermission(SHIZUKU_REQUEST_CODE)
-                setTileLabel("等待 Shizuku 授权")
+                openMainApp(R.string.tile_shizuku_permission_required)
             }
 
-            else -> setTileLabel("请先开启无障碍")
+            else -> openMainApp(R.string.tile_shizuku_unavailable)
         }
     }
 
@@ -113,26 +148,16 @@ class AnalysisTileService : TileService() {
     //  Private helpers
     // -----------------------------------------------------------------------
 
-    /** Waits for SystemUI's unlockAndRun transition before capturing. */
+    /** Lets the long-lived accessibility service wait for SystemUI to close. */
     private fun scheduleScreenshot() {
-        var waitedMs = PANEL_MIN_CLOSE_DELAY_MS
-        val captureWhenReady = object : Runnable {
-            override fun run() {
-                val service = AccessibilityScreenshotService.instance
-                if (service == null) {
-                    Log.w(TAG, "a11y instance gone before screenshot")
-                    return
-                }
-                if (service.isCaptureTargetReady() || waitedMs >= PANEL_MAX_CLOSE_DELAY_MS) {
-                    service.triggerScreenshot(pendingTapStartedAtMs)
-                    mainHandler.postDelayed({ updateTileLabel() }, 2000)
-                    return
-                }
-                waitedMs += PANEL_READY_POLL_MS
-                mainHandler.postDelayed(this, PANEL_READY_POLL_MS)
-            }
+        val service = AccessibilityScreenshotService.instance
+        if (service == null) {
+            AppLog.w(TAG, "a11y instance gone before screenshot")
+            openMainApp(R.string.tile_accessibility_unavailable)
+            return
         }
-        mainHandler.postDelayed(captureWhenReady, PANEL_MIN_CLOSE_DELAY_MS)
+        service.scheduleScreenshot(pendingTapStartedAtMs)
+        mainHandler.postDelayed({ updateTileLabel() }, 2000)
     }
 
     /**
@@ -142,8 +167,11 @@ class AnalysisTileService : TileService() {
     private fun enableAccessibilityAndShoot() {
         AppShell.enableAccessibility(this) { ok ->
             // onDone 在主线程
-            if (!ok) { updateTileLabel(); return@enableAccessibility }
-            var waited  = 0
+            if (!ok) {
+                openMainApp(R.string.tile_accessibility_enable_failed)
+                return@enableAccessibility
+            }
+            var waited = 0
             val poll = object : Runnable {
                 override fun run() {
                     val svc = AccessibilityScreenshotService.instance
@@ -152,8 +180,14 @@ class AnalysisTileService : TileService() {
                             setTileLabel("截图中…")
                             scheduleScreenshot()
                         }
-                        waited < 6000 -> { waited += 500; mainHandler.postDelayed(this, 500) }
-                        else -> { Log.w(TAG, "A11y service timeout"); updateTileLabel() }
+                        waited < 6000 -> {
+                            waited += 500
+                            mainHandler.postDelayed(this, 500)
+                        }
+                        else -> {
+                            AppLog.w(TAG, "A11y service timeout")
+                            openMainApp(R.string.tile_accessibility_unavailable)
+                        }
                     }
                 }
             }
@@ -162,6 +196,30 @@ class AnalysisTileService : TileService() {
     }
 
     private fun updateTileLabel() = setTileLabel("截图分析")
+
+    private fun openMainApp(messageRes: Int) {
+        val message = getString(messageRes)
+        setTileLabel(message)
+        Toast.makeText(applicationContext, message, Toast.LENGTH_LONG).show()
+
+        val intent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+        }
+        val pendingIntent = PendingIntent.getActivity(
+            this,
+            messageRes,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        runCatching { startActivityAndCollapse(pendingIntent) }
+            .onFailure { error ->
+                AppLog.e(TAG, "Unable to open setup screen", error)
+                runCatching { pendingIntent.send() }
+                    .onFailure { sendError ->
+                        AppLog.e(TAG, "Setup screen fallback failed", sendError)
+                    }
+            }
+    }
 
     private fun setTileLabel(label: String) {
         qsTile?.apply { state = Tile.STATE_INACTIVE; this.label = label; updateTile() }

@@ -22,6 +22,14 @@ internal object SessionQrBitmapStore {
 
     fun bitmapFor(sessionId: Int): Bitmap? = active[sessionId]
 
+    fun copyForHistory(sessionId: Int): Bitmap? = (pending[sessionId] ?: active[sessionId])
+        ?.let { bitmap ->
+            runCatching {
+                bitmap.takeUnless(Bitmap::isRecycled)
+                    ?.copy(Bitmap.Config.ARGB_8888, false)
+            }.getOrNull()
+        }
+
     fun remove(sessionId: Int) {
         val pendingBitmap = pending.remove(sessionId)
         val activeBitmap = active.remove(sessionId)

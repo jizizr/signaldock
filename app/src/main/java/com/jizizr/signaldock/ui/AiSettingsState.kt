@@ -7,9 +7,11 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import com.jizizr.signaldock.AiConnectionConfiguration
 import com.jizizr.signaldock.AiSettingsStore
 import com.jizizr.signaldock.MiclawSession
 import com.jizizr.signaldock.MiclawSessionStore
+import com.jizizr.signaldock.isAiConfigurationReady
 
 /**
  * AI 参数的 UI 状态持有者。
@@ -53,10 +55,13 @@ class AiSettingsState {
         private set
 
     val isConfigured: Boolean
-        get() = (usesMiclaw && (miclawUseExternalAgent || miclawSessionAvailable)) ||
-                !usesMiclaw && apiKey.isNotBlank() &&
-                (baseUrl.startsWith("https://") || baseUrl.startsWith("http://")) &&
-                modelId.isNotBlank()
+        get() = isAiConfigurationReady(
+            usesMiclaw = usesMiclaw,
+            miclawUseExternalAgent = miclawUseExternalAgent,
+            miclawSessionAvailable = miclawSessionAvailable,
+            apiKey = apiKey,
+            connection = AiConnectionConfiguration(baseUrl, modelId, reasoningEffort),
+        )
 
     fun updateMiclawThinkingEnabled(enabled: Boolean) {
         miclawThinkingEnabled = enabled

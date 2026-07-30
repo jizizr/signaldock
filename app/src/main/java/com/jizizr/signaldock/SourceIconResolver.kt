@@ -5,7 +5,6 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Rect
 import android.graphics.drawable.Icon
-import android.util.Log
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.core.graphics.drawable.toBitmap
 import androidx.core.graphics.scale
@@ -23,6 +22,12 @@ data class ResolvedSourceIcon(
     val bitmap: Bitmap,
     val source: String,
     val taskId: Int? = null,
+)
+
+data class SourceIconHistorySnapshot(
+    val packageName: String?,
+    val taskId: Int?,
+    val bitmap: Bitmap?,
 )
 
 object SourceIconCache {
@@ -61,7 +66,7 @@ object SourceIconCache {
                 taskId = taskId ?: current?.taskId,
             )
         }
-        Log.i(TAG, "session=$sessionId package=$packageName source=$source taskId=$taskId")
+        AppLog.i(TAG, "session=$sessionId package=$packageName source=$source taskId=$taskId")
     }
 
     fun iconFor(sessionId: Int): Icon? = entries[sessionId]
@@ -72,6 +77,28 @@ object SourceIconCache {
     fun packageNameFor(sessionId: Int): String? = entries[sessionId]?.packageName
 
     fun taskIdFor(sessionId: Int): Int? = entries[sessionId]?.taskId
+
+    fun snapshotForHistory(sessionId: Int): SourceIconHistorySnapshot? = entries[sessionId]
+        ?.let { entry ->
+            SourceIconHistorySnapshot(
+                packageName = entry.packageName,
+                taskId = entry.taskId,
+                bitmap = runCatching {
+                    entry.bitmap
+                        ?.takeUnless(Bitmap::isRecycled)
+                        ?.copy(Bitmap.Config.ARGB_8888, false)
+                }.getOrNull(),
+            )
+        }
+
+    fun restoreFromHistory(
+        sessionId: Int,
+        packageName: String?,
+        bitmap: Bitmap?,
+        taskId: Int?,
+    ) {
+        entries[sessionId] = Entry(packageName, bitmap, "recognition_history", taskId)
+    }
 
     fun remove(sessionId: Int) {
         entries.remove(sessionId)?.bitmap?.recycle()
@@ -113,7 +140,7 @@ object SourceIconResolver {
         } else {
             null
         }
-        Log.i(TAG, "foreground package=$packageName miniProgramNode=${miniProgramBounds != null}")
+        AppLog.i(TAG, "foreground package=$packageName miniProgramNode=${miniProgramBounds != null}")
         return SourceAppInspection(packageName, miniProgramBounds)
     }
 
@@ -146,7 +173,7 @@ object SourceIconResolver {
                 .toBitmap(width = 128, height = 128, config = Bitmap.Config.ARGB_8888)
             ResolvedSourceIcon(icon, "application_icon", recentTaskId)
         } catch (error: Exception) {
-            Log.w(TAG, "Unable to load icon for $packageName", error)
+            AppLog.w(TAG, "Unable to load icon for $packageName", error)
             null
         }
     }
