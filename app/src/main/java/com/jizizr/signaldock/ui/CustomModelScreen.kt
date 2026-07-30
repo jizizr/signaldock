@@ -1,6 +1,5 @@
 package com.jizizr.signaldock.ui
 
-import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -54,9 +53,8 @@ internal fun CustomModelScreen(
     var keyVisible by rememberSaveable { mutableStateOf(false) }
     val canSave = baseUrl.isNotBlank() && modelId.isNotBlank()
 
-    BackHandler(onBack = onBack)
-
-    Scaffold(
+    PredictiveBackContainer(onBack = onBack) {
+        Scaffold(
         topBar = {
             SmallTopAppBar(
                 title = stringResource(R.string.custom_model),
@@ -85,7 +83,7 @@ internal fun CustomModelScreen(
                 },
             )
         },
-    ) { padding ->
+        ) { padding ->
         val layoutDirection = LocalLayoutDirection.current
         LazyColumn(
             modifier = Modifier
@@ -177,6 +175,7 @@ internal fun CustomModelScreen(
                     }
                 }
             }
+        }
         }
     }
 }
