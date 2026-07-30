@@ -3,7 +3,6 @@ package com.jizizr.signaldock
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.os.Process
-import android.util.Log
 import androidx.annotation.Keep
 import java.io.File
 import kotlin.system.exitProcess
@@ -16,8 +15,8 @@ class MiclawCredentialService(private val context: Context) : IMiclawCredentialS
         val account = readAccountMaterial()
             ?: error("系统小米账号中没有可用登录信息")
         return runCatching { MiclawPassportClient.refresh(account).toJson() }
-            .onSuccess { Log.i(TAG, "osbotapi token refreshed through Xiaomi Passport") }
-            .onFailure { Log.w(TAG, "Passport refresh failed: ${it.message}") }
+            .onSuccess { AppLog.i(TAG, "osbotapi token refreshed through Xiaomi Passport") }
+            .onFailure { AppLog.w(TAG, "Passport refresh failed: ${it.message}") }
             .getOrElse {
                 if (forceRefresh || account.serviceToken.isBlank()) throw it
                 account.toJson()

@@ -17,6 +17,9 @@ import org.lsposed.hiddenapibypass.HiddenApiBypass
 class App : Application() {
     override fun onCreate() {
         super.onCreate()
+        DiagnosticLogStore.init(this)
+        DiagnosticCrashHandler.init()
+        AppLog.i("App", "Application process started")
         // minSdk=36 >= P(28), always apply bypass
         HiddenApiBypass.addHiddenApiExemptions("")
         // 初始化 AI 参数持久化存储

@@ -1,7 +1,6 @@
 package com.jizizr.signaldock.ui
 
 import android.graphics.BitmapFactory
-import android.util.Log
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -33,11 +32,12 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
-import com.jizizr.signaldock.R
+import com.jizizr.signaldock.AppLog
 import com.jizizr.signaldock.MiclawAgentClient
 import com.jizizr.signaldock.MiclawAccountLoginClient
 import com.jizizr.signaldock.MiclawCredentialImporter
 import com.jizizr.signaldock.MiclawSessionStore
+import com.jizizr.signaldock.R
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -333,7 +333,7 @@ internal fun AiSettingsSection(
                 }
                 accountLoginBusy = false
                 result.onSuccess(::handleAccountLoginOutcome).onFailure { error ->
-                    Log.e("MiclawAccountLogin", "Xiaomi login failed", error)
+                    AppLog.e("MiclawAccountLogin", "Xiaomi login failed", error)
                     onMessage(error.message ?: resources.getString(R.string.unknown_error))
                 }
             }
@@ -355,7 +355,7 @@ internal fun AiSettingsSection(
                     twoFactorResendSeconds = TWO_FACTOR_RESEND_SECONDS
                     onMessage(resources.getString(R.string.miclaw_verification_sent))
                 }.onFailure { error ->
-                    Log.e("MiclawAccountLogin", "Sending Xiaomi 2FA ticket failed", error)
+                    AppLog.e("MiclawAccountLogin", "Sending Xiaomi 2FA ticket failed", error)
                     onMessage(error.message ?: resources.getString(R.string.unknown_error))
                 }
             }
@@ -371,7 +371,7 @@ internal fun AiSettingsSection(
                 }
                 accountLoginBusy = false
                 result.onSuccess(::completeAccountLogin).onFailure { error ->
-                    Log.e("MiclawAccountLogin", "Verifying Xiaomi 2FA ticket failed", error)
+                    AppLog.e("MiclawAccountLogin", "Verifying Xiaomi 2FA ticket failed", error)
                     onMessage(error.message ?: resources.getString(R.string.unknown_error))
                 }
             }

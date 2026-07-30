@@ -9,7 +9,6 @@ import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.os.IBinder
 import android.os.ParcelFileDescriptor
-import android.util.Log
 import com.aios.apptoolsdk.aidl.Attachment
 import com.aios.apptoolsdk.aidl.IExternalAgentCallback
 import com.aios.apptoolsdk.aidl.IExternalAgentService
@@ -93,7 +92,7 @@ object MiclawAgentClient {
         if (sessionId.isNullOrBlank() || sessionId.startsWith("error:")) {
             return Result.failure(IllegalStateException("Miclaw 会话创建失败: $sessionId"))
         }
-        Log.i(TAG, "Miclaw session opened: agent=$MICLAW_AGENT_ID")
+        AppLog.i(TAG, "Miclaw session opened: agent=$MICLAW_AGENT_ID")
 
         val imageFile = File.createTempFile("miclaw-screenshot-", ".jpg", context.cacheDir)
         val imageFd = try {
@@ -124,7 +123,7 @@ object MiclawAgentClient {
             ) {
                 try {
                     response.set(extractResultText(resultJson, attachments))
-                    Log.i(TAG, "Miclaw request completed")
+                    AppLog.i(TAG, "Miclaw request completed")
                 } catch (error: Throwable) {
                     failure.set(error)
                 } finally {
@@ -135,7 +134,7 @@ object MiclawAgentClient {
 
             override fun onError(sessionId: String?, errorJson: String?) {
                 val message = parseError(errorJson)
-                Log.e(TAG, "Miclaw callback error: $message")
+                AppLog.e(TAG, "Miclaw callback error: $message")
                 failure.set(IllegalStateException(message))
                 completed.countDown()
             }
@@ -156,7 +155,7 @@ object MiclawAgentClient {
                 listOf(Attachment.fromFd("screenshot.jpg", "image/jpeg", imageFd)),
                 callback,
             )
-            Log.i(TAG, "Miclaw screenshot submitted: agent=$MICLAW_AGENT_ID")
+            AppLog.i(TAG, "Miclaw screenshot submitted: agent=$MICLAW_AGENT_ID")
             imageFd.close()
             imageFile.delete()
 
@@ -186,24 +185,24 @@ object MiclawAgentClient {
         val connection = object : ServiceConnection {
             override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
                 remote.set(IExternalAgentService.Stub.asInterface(binder))
-                Log.i(TAG, "Miclaw external Agent connected: component=$name")
+                AppLog.i(TAG, "Miclaw external Agent connected: component=$name")
                 ready.countDown()
             }
 
             override fun onServiceDisconnected(name: ComponentName?) {
-                Log.w(TAG, "Miclaw external Agent disconnected: component=$name")
+                AppLog.w(TAG, "Miclaw external Agent disconnected: component=$name")
                 ready.countDown()
             }
 
             override fun onNullBinding(name: ComponentName?) {
                 connectionError.set("Miclaw 返回空 Binder")
-                Log.e(TAG, "Miclaw returned a null binder: component=$name")
+                AppLog.e(TAG, "Miclaw returned a null binder: component=$name")
                 ready.countDown()
             }
 
             override fun onBindingDied(name: ComponentName?) {
                 connectionError.set("Miclaw Binder 已失效")
-                Log.e(TAG, "Miclaw binding died: component=$name")
+                AppLog.e(TAG, "Miclaw binding died: component=$name")
                 ready.countDown()
             }
         }
@@ -242,7 +241,7 @@ object MiclawAgentClient {
     ) : AutoCloseable {
         override fun close() {
             runCatching { context.unbindService(connection) }
-                .onFailure { Log.w(TAG, "Miclaw unbind failed", it) }
+                .onFailure { AppLog.w(TAG, "Miclaw unbind failed", it) }
         }
     }
 

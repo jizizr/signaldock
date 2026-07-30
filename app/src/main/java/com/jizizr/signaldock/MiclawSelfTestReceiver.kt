@@ -4,7 +4,6 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.graphics.BitmapFactory
-import android.util.Log
 import androidx.annotation.Keep
 import org.json.JSONArray
 import org.json.JSONObject
@@ -74,9 +73,9 @@ class MiclawSelfTestReceiver : BroadcastReceiver() {
                     )
                 resultFile.writeText(result.toString(2))
                 check(passed) { "截图内容校验失败: $searchable" }
-                Log.i(TAG, "MICLAW_SELF_TEST_PASS result=${resultFile.absolutePath}")
+                AppLog.i(TAG, "MICLAW_SELF_TEST_PASS result=${resultFile.absolutePath}")
             } catch (error: Throwable) {
-                Log.e(TAG, "MICLAW_SELF_TEST_FAIL", error)
+                AppLog.e(TAG, "MICLAW_SELF_TEST_FAIL", error)
                 resultFile.writeText(
                     JSONObject()
                         .put("passed", false)
