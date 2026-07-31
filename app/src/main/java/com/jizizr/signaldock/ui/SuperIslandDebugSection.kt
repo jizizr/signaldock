@@ -35,10 +35,10 @@ import top.yukonga.miuix.kmp.basic.CircularProgressIndicator
 import top.yukonga.miuix.kmp.basic.DropdownItem
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
-import top.yukonga.miuix.kmp.overlay.OverlayDialog
 import top.yukonga.miuix.kmp.preference.SwitchPreference
 import top.yukonga.miuix.kmp.preference.ArrowPreference
 import top.yukonga.miuix.kmp.preference.OverlaySpinnerPreference
+import top.yukonga.miuix.kmp.window.WindowDialog
 
 @Composable
 internal fun SuperIslandDebugSection(
@@ -65,6 +65,10 @@ internal fun SuperIslandDebugSection(
         mutableStateOf(SuperIslandSettingsStore.networkBypassDurationMs.toString())
     }
 
+    val bypassModeItems = listOf(
+        DropdownItem(text = stringResource(R.string.super_island_bypass_mode_standard)),
+        DropdownItem(text = stringResource(R.string.super_island_bypass_mode_custom)),
+    )
     SwitchPreference(
         checked = networkBypassEnabled,
         onCheckedChange = { enabled ->
@@ -74,11 +78,6 @@ internal fun SuperIslandDebugSection(
         },
         title = stringResource(R.string.super_island_network_bypass),
         summary = stringResource(R.string.super_island_network_bypass_summary),
-    )
-
-    val bypassModeItems = listOf(
-        DropdownItem(text = stringResource(R.string.super_island_bypass_mode_standard)),
-        DropdownItem(text = stringResource(R.string.super_island_bypass_mode_custom)),
     )
     if (networkBypassEnabled) {
         OverlaySpinnerPreference(
@@ -168,7 +167,7 @@ internal fun SuperIslandDebugSection(
         },
     )
 
-    OverlayDialog(
+    WindowDialog(
         title = stringResource(R.string.super_island_bypass_duration),
         show = showDurationDialog,
         onDismissRequest = { showDurationDialog = false },

@@ -5,7 +5,6 @@
 // Portions of the migration follow KernelSU commit f261dc4a3dc3f137ebbf38cd1fcbd06d2858c494.
 package com.jizizr.signaldock.ui.navigation
 
-import android.os.Build
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.EaseOut
 import androidx.compose.animation.core.spring
@@ -322,11 +321,8 @@ fun FloatingBottomBar(
         }
     }
 
-    // Keep the same compatibility guard as the old InstallerX implementation.
-    // If your InteractiveHighlight has already been made safe on older Android versions,
-    // this can be simplified to KernelSU's unguarded version.
     val interactiveHighlight =
-        if (isLiquidGlassMode && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        if (isLiquidGlassMode) {
             remember(animationScope, tabWidthPx) {
                 InteractiveHighlight(
                     animationScope = animationScope,

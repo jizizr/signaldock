@@ -53,11 +53,11 @@ import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.extended.Hide
 import top.yukonga.miuix.kmp.icon.extended.Show
-import top.yukonga.miuix.kmp.overlay.OverlayDialog
 import top.yukonga.miuix.kmp.preference.ArrowPreference
 import top.yukonga.miuix.kmp.preference.OverlaySpinnerPreference
 import top.yukonga.miuix.kmp.preference.SwitchPreference
 import top.yukonga.miuix.kmp.theme.MiuixTheme
+import top.yukonga.miuix.kmp.window.WindowDialog
 
 @Composable
 internal fun AiSettingsSection(
@@ -400,7 +400,7 @@ private fun MiclawLoginDialog(
     onSave: () -> Unit,
 ) {
     var tokenVisible by remember { mutableStateOf(false) }
-    OverlayDialog(
+    WindowDialog(
         title = stringResource(R.string.miclaw_login),
         show = show,
         onDismissRequest = onDismiss,
@@ -526,7 +526,7 @@ private fun MiclawAccountLoginDialog(
     onVerifyTicket: () -> Unit,
 ) {
     var passwordVisible by remember { mutableStateOf(false) }
-    OverlayDialog(
+    WindowDialog(
         title = stringResource(R.string.miclaw_account_login),
         show = show,
         onDismissRequest = onDismiss,
