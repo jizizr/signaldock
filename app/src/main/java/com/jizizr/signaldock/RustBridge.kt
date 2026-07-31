@@ -4,7 +4,6 @@ import android.graphics.Bitmap
 import android.os.SystemClock
 import org.json.JSONObject
 import java.util.concurrent.CompletableFuture
-import java.util.concurrent.Executors
 
 /**
  * JNI bridge to the Rust `liveupdate_core` shared library.
@@ -15,7 +14,11 @@ import java.util.concurrent.Executors
 object RustBridge {
 
     private const val TAG = "RustBridge"
-    private val preprocessingExecutor = Executors.newFixedThreadPool(2)
+    private val preprocessingExecutor = newIdleExecutor(
+        "SignalDock-Image",
+        2,
+        android.os.Process.THREAD_PRIORITY_BACKGROUND,
+    )
 
     init {
         try {

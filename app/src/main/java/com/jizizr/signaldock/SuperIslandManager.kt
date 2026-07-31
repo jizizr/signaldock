@@ -11,7 +11,6 @@ import android.os.Bundle
 import org.json.JSONObject
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
-import java.util.concurrent.Executors
 
 /**
  * 超级岛通知管理器 —— 独立于现有 LiveUpdateService 的平行通知体系。
@@ -48,7 +47,11 @@ object SuperIslandManager : SessionNotificationManager {
      * 单线程执行器，保证 bypass 严格串行（等价于 InstallerX 的 Mutex）。
      * 前一个 disable→notify→delay→enable 全部完成后才开始下一个。
      */
-    private val bypassExecutor = Executors.newSingleThreadExecutor()
+    private val bypassExecutor = newIdleExecutor(
+        "SignalDock-IslandBypass",
+        1,
+        android.os.Process.THREAD_PRIORITY_BACKGROUND,
+    )
     private val networkBlockActive = AtomicBoolean(false)
     private val nextTestNotificationId = AtomicInteger(ISLAND_NOTIFICATION_ID)
     private val lastTestNotificationId = AtomicInteger(-1)
