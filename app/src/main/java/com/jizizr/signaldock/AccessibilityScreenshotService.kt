@@ -74,6 +74,10 @@ class AccessibilityScreenshotService : AccessibilityService() {
     private var targetPackages: Set<String> = emptySet()
     private var lastAutoEventAtMs = 0L
     private var activeMiniProgramTaskId = -1
+    private var diagnosticEventCount = 0L
+    private var diagnosticEvaluationCount = 0L
+    private var diagnosticContentEventsSuppressed = 0
+    private var lastDiagnosticContentEventAtMs = 0L
     @Volatile
     private var activeAutoSessionId: Int? = null
     private var lastActivityClassName = ""
@@ -104,17 +108,42 @@ class AccessibilityScreenshotService : AccessibilityService() {
         instance = this
         refreshAutoConfiguration()
         AppLog.i(TAG, "AccessibilityScreenshotService connected  ready to capture")
+        AutoPageDiagnostics.log(
+            "stage=service-connected globalEnabled=${AutoPageProfileStore.enabled} " +
+                "serviceEventTypes=${serviceInfo.eventTypes} " +
+                "servicePackages=${serviceInfo.packageNames?.joinToString().orEmpty()}",
+        )
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         event ?: return
-        if (!AutoPageProfileStore.enabled || event.eventType and AUTO_EVENT_TYPES == 0) return
+        diagnosticEventCount++
+        if (!AutoPageProfileStore.enabled) {
+            logAutoEvent(event, "ignored-global-disabled")
+            return
+        }
+        if (event.eventType and AUTO_EVENT_TYPES == 0) {
+            logAutoEvent(event, "ignored-event-type")
+            return
+        }
         val packageName = event.packageName?.toString().orEmpty()
-        if (packageName.isBlank() || isSystemUiPackage(packageName) ||
-            packageName == applicationContext.packageName
-        ) return
+        if (packageName.isBlank()) {
+            logAutoEvent(event, "ignored-empty-package")
+            return
+        }
+        if (isSystemUiPackage(packageName)) {
+            logAutoEvent(event, "ignored-system-ui")
+            return
+        }
+        if (packageName == applicationContext.packageName) {
+            logAutoEvent(event, "ignored-self")
+            return
+        }
         val profiles = availableProfiles
-        if (profiles.isEmpty()) return
+        if (profiles.isEmpty()) {
+            logAutoEvent(event, "ignored-no-available-profiles")
+            return
+        }
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
             event.className?.toString()?.takeIf(String::isNotBlank)?.let {
                 lastActivityClassName = it
@@ -142,17 +171,29 @@ class AccessibilityScreenshotService : AccessibilityService() {
                 "auto page rearmed on window exit package=$packageName " +
                     "activity=${event.className}",
             )
+            AutoPageDiagnostics.log(
+                "stage=event-rearm reason=definite-identity-exit " +
+                    "profile=${AutoPageDiagnostics.profileRef(activeProfile.id)} " +
+                    "package=$packageName activity=${event.className}",
+            )
         }
-        if (profiles.none { profile ->
-                AutoPageMatcher.canMatchIdentity(profile, packageName, lastActivityClassName)
-            }) {
+        val identityCandidates = profiles.filter { profile ->
+            AutoPageMatcher.canMatchIdentity(profile, packageName, lastActivityClassName)
+        }
+        if (identityCandidates.isEmpty()) {
+            logAutoEvent(event, "ignored-identity-mismatch")
             return
         }
         if (autoAnalysisInProgress.get() || manualAnalysisInProgress.get()) {
             autoEvaluationPending.set(true)
+            logAutoEvent(event, "queued-analysis-busy")
             return
         }
         scheduleAutoEvaluation()
+        logAutoEvent(
+            event,
+            "scheduled candidates=${identityCandidates.joinToString { AutoPageDiagnostics.profileRef(it.id) }}",
+        )
     }
     override fun onInterrupt() { /* not used */ }
 
@@ -178,6 +219,10 @@ class AccessibilityScreenshotService : AccessibilityService() {
             updateRuntimeEventFilter()
             if (configuredProfiles.isEmpty()) resetAutoPageState()
             AppLog.i(TAG, "auto configuration refreshed profiles=${configuredProfiles.size}")
+            AutoPageDiagnostics.log(
+                "stage=config-refresh globalEnabled=${AutoPageProfileStore.enabled} " +
+                    "configured=${configuredProfiles.joinToString { AutoPageDiagnostics.profileRef(it.id) }}",
+            )
         }
     }
 
@@ -192,6 +237,13 @@ class AccessibilityScreenshotService : AccessibilityService() {
             notificationTimeout = 150L
             packageNames = targetPackages.takeIf { it.isNotEmpty() }?.toTypedArray()
         }
+        AutoPageDiagnostics.log(
+            "stage=event-filter configured=${configuredProfiles.size} " +
+                "available=${availableProfiles.size} targets=${targetPackages.joinToString()} " +
+                "locked=${configuredProfiles.filter { AutoPageNotificationLockStore.isLocked(it.id) }
+                    .joinToString { AutoPageDiagnostics.profileRef(it.id) }} " +
+                "eventTypes=${serviceInfo.eventTypes} timeout=${serviceInfo.notificationTimeout}",
+        )
     }
 
     fun isCaptureTargetReady(): Boolean {
@@ -257,6 +309,10 @@ class AccessibilityScreenshotService : AccessibilityService() {
                 TAG,
                 "auto page held by result notification profile=$profileId id=$notificationId",
             )
+            AutoPageDiagnostics.log(
+                "stage=notification-lock profile=${AutoPageDiagnostics.profileRef(profileId)} " +
+                    "notification=$notificationId",
+            )
         }
     }
 
@@ -268,22 +324,71 @@ class AccessibilityScreenshotService : AccessibilityService() {
                 TAG,
                 "auto page rearmed by notification removal profile=$profileId id=$notificationId",
             )
+            AutoPageDiagnostics.log(
+                "stage=notification-release profile=${AutoPageDiagnostics.profileRef(profileId)} " +
+                    "notification=$notificationId",
+            )
         }
     }
 
     private fun evaluateAutoPage() {
-        if (!AutoPageProfileStore.enabled || !isDeviceReadyForAutoCapture() ||
-            autoAnalysisInProgress.get() || manualAnalysisInProgress.get()
-        ) return
+        diagnosticEvaluationCount++
+        if (!AutoPageProfileStore.enabled) {
+            AutoPageDiagnostics.log("stage=evaluate-skip reason=global-disabled")
+            return
+        }
+        val readiness = autoCaptureReadiness()
+        if (!readiness.interactive || readiness.keyguardLocked) {
+            AutoPageDiagnostics.log(
+                "stage=evaluate-skip reason=device-not-ready interactive=${readiness.interactive} " +
+                    "keyguardLocked=${readiness.keyguardLocked}",
+            )
+            return
+        }
+        if (autoAnalysisInProgress.get() || manualAnalysisInProgress.get()) {
+            AutoPageDiagnostics.log(
+                "stage=evaluate-skip reason=analysis-busy auto=${autoAnalysisInProgress.get()} " +
+                    "manual=${manualAnalysisInProgress.get()}",
+            )
+            return
+        }
         val profiles = availableProfiles
-        if (profiles.isEmpty()) return
+        if (profiles.isEmpty()) {
+            AutoPageDiagnostics.log("stage=evaluate-skip reason=no-available-profiles")
+            return
+        }
+        AutoPageDiagnostics.log(
+            "stage=evaluate-start evaluation=$diagnosticEvaluationCount " +
+                "lastActivity=$lastActivityClassName profiles=${profiles.size} " +
+                "coordinator=${describeCoordinatorState()}",
+        )
         val inspection = SourceIconResolver.inspect(this, lastActivityClassName)
         val packageName = inspection.packageName.orEmpty()
+        AutoPageDiagnostics.log(
+            "stage=inspection package=$packageName activity=${inspection.activityClassName} " +
+                "mini=${inspection.isWechatMiniProgram} miniTask=${inspection.miniProgramTaskId} " +
+                "miniLabelHash=${AutoPageDiagnostics.fingerprint(normalizePageText(inspection.miniProgramLabel))} " +
+                "miniIconHash=${inspection.miniProgramIconHash.take(12).ifBlank { "-" }} " +
+                "nodes=${inspection.stableKeywords.size}",
+        )
         if (packageName.isBlank() || profiles.none { it.packageName == packageName }) {
+            AutoPageDiagnostics.log(
+                "stage=evaluate-skip reason=inspection-package-mismatch package=$packageName " +
+                    "targets=${profiles.map(AutoPageProfile::packageName).distinct().joinToString()}",
+            )
             return
         }
         val observation = inspection.toObservation()
         val ranked = AutoPageMatcher.rank(observation, profiles)
+        profiles.forEach { profile ->
+            AutoPageDiagnostics.log(
+                "stage=match " + AutoPageDiagnostics.describeMatch(
+                    observation,
+                    profile,
+                    ranked.firstOrNull { it.profile.id == profile.id },
+                ),
+            )
+        }
         var activeProfileId = autoCoordinator.activeProfileId()
         val activeProfile = profiles.firstOrNull { it.id == activeProfileId }
         if (
@@ -300,6 +405,7 @@ class AccessibilityScreenshotService : AccessibilityService() {
             )
             resetAutoPageState()
             activeProfileId = null
+            AutoPageDiagnostics.log("stage=coordinator-reset reason=new-mini-program-task")
         }
         if (activeProfileId != null) {
             val activeMatch = ranked.firstOrNull { it.profile.id == activeProfileId }
@@ -312,21 +418,43 @@ class AccessibilityScreenshotService : AccessibilityService() {
             }
             // The coordinator covers the short interval before the result notification is sent.
             // After publication, the persisted notification lock becomes authoritative.
-            if (autoCoordinator.isFired()) return
+            if (autoCoordinator.isFired()) {
+                AutoPageDiagnostics.log(
+                    "stage=evaluate-skip reason=coordinator-fired state=${describeCoordinatorState()}",
+                )
+                return
+            }
         }
 
         val best = ranked.firstOrNull { match ->
             autoCoordinator.canEvaluate(match.profile.id) && match.textMatched
         } ?: run {
             scheduleAutoReset()
+            AutoPageDiagnostics.log(
+                "stage=evaluate-skip reason=no-text-matched-candidate " +
+                    "state=${describeCoordinatorState()}",
+            )
             return
         }
         val signature = observation.contentSignature()
-        if (!autoCoordinator.canAttempt(best.profile.id, signature)) return
+        if (!autoCoordinator.canAttempt(best.profile.id, signature)) {
+            AutoPageDiagnostics.log(
+                "stage=evaluate-skip reason=coordinator-rejected-attempt " +
+                    "profile=${AutoPageDiagnostics.profileRef(best.profile.id)} " +
+                    "signature=${AutoPageDiagnostics.fingerprint(signature)} " +
+                    "state=${describeCoordinatorState()}",
+            )
+            return
+        }
         AppLog.i(
             TAG,
             "auto candidate profile=${best.profile.id} text=${best.textMatched} " +
                 "score=${"%.2f".format(best.score)}",
+        )
+        AutoPageDiagnostics.log(
+            "stage=candidate profile=${AutoPageDiagnostics.profileRef(best.profile.id)} " +
+                "score=${"%.3f".format(java.util.Locale.US, best.score)} " +
+                "signature=${AutoPageDiagnostics.fingerprint(signature)}",
         )
         requestScreenshot(
             CaptureTrigger.Auto(
@@ -342,14 +470,32 @@ class AccessibilityScreenshotService : AccessibilityService() {
     private fun requestScreenshot(trigger: CaptureTrigger) {
         if (trigger is CaptureTrigger.Auto &&
             trigger.manualGenerationAtStart != manualGeneration.get()
-        ) return
+        ) {
+            AutoPageDiagnostics.log(
+                "stage=capture-rejected reason=manual-generation-changed " +
+                    "profile=${AutoPageDiagnostics.profileRef(trigger.profile.id)}",
+            )
+            return
+        }
         if (!analysisSlots.tryAcquire()) {
             AppLog.w(TAG, "Analysis capacity reached; ignoring request")
+            if (trigger is CaptureTrigger.Auto) {
+                AutoPageDiagnostics.log(
+                    "stage=capture-rejected reason=analysis-capacity " +
+                        "profile=${AutoPageDiagnostics.profileRef(trigger.profile.id)}",
+                )
+            }
             retryManualOrShowBusy(trigger)
             return
         }
         if (!screenshotInProgress.compareAndSet(false, true)) {
             AppLog.w(TAG, "Screenshot already in progress  ignoring request")
+            if (trigger is CaptureTrigger.Auto) {
+                AutoPageDiagnostics.log(
+                    "stage=capture-rejected reason=screenshot-in-progress " +
+                        "profile=${AutoPageDiagnostics.profileRef(trigger.profile.id)}",
+                )
+            }
             analysisSlots.release()
             retryManualOrShowBusy(trigger)
             return
@@ -359,6 +505,10 @@ class AccessibilityScreenshotService : AccessibilityService() {
         ) {
             screenshotInProgress.set(false)
             analysisSlots.release()
+            AutoPageDiagnostics.log(
+                "stage=capture-rejected reason=auto-analysis-race " +
+                    "profile=${AutoPageDiagnostics.profileRef(trigger.profile.id)}",
+            )
             return
         }
         if (trigger is CaptureTrigger.Manual) manualAnalysisInProgress.set(true)
@@ -367,6 +517,12 @@ class AccessibilityScreenshotService : AccessibilityService() {
             "pipeline screenshot requested: trigger=${trigger.javaClass.simpleName} " +
                 "elapsed=${SystemClock.elapsedRealtime() - trigger.startedAtMs}ms",
         )
+        if (trigger is CaptureTrigger.Auto) {
+            AutoPageDiagnostics.log(
+                "stage=capture-request profile=${AutoPageDiagnostics.profileRef(trigger.profile.id)} " +
+                    "signature=${AutoPageDiagnostics.fingerprint(trigger.contentSignature)}",
+            )
+        }
         val sourceInspection = when (trigger) {
             is CaptureTrigger.Manual -> SourceIconResolver.inspect(
                 service = this,
@@ -402,6 +558,12 @@ class AccessibilityScreenshotService : AccessibilityService() {
                             screenshotInProgress.set(false)
                             analysisSlots.release()
                             releaseCaptureAnalysis(trigger)
+                            if (trigger is CaptureTrigger.Auto) {
+                                AutoPageDiagnostics.log(
+                                    "stage=capture-failed reason=null-bitmap " +
+                                        "profile=${AutoPageDiagnostics.profileRef(trigger.profile.id)}",
+                                )
+                            }
                             if (trigger is CaptureTrigger.Manual) showCaptureMessage(R.string.screenshot_failed)
                             return
                         }
@@ -420,6 +582,10 @@ class AccessibilityScreenshotService : AccessibilityService() {
                             bitmap.recycle()
                             analysisSlots.release()
                             autoCoordinator.suppressUntilExit(trigger.profile.id)
+                            AutoPageDiagnostics.log(
+                                "stage=capture-cancelled reason=manual-after-screenshot " +
+                                    "profile=${AutoPageDiagnostics.profileRef(trigger.profile.id)}",
+                            )
                             releaseCaptureAnalysis(trigger)
                             return
                         }
@@ -431,12 +597,22 @@ class AccessibilityScreenshotService : AccessibilityService() {
                             ) {
                                 bitmap.recycle()
                                 analysisSlots.release()
+                                AutoPageDiagnostics.log(
+                                    "stage=capture-cancelled reason=coordinator-recheck " +
+                                        "profile=${AutoPageDiagnostics.profileRef(trigger.profile.id)} " +
+                                        "state=${describeCoordinatorState()}",
+                                )
                                 releaseCaptureAnalysis(trigger)
                                 return
                             }
                             autoCoordinator.onAttempt(
                                 trigger.profile.id,
                                 trigger.contentSignature,
+                            )
+                            AutoPageDiagnostics.log(
+                                "stage=attempt-started " +
+                                    "profile=${AutoPageDiagnostics.profileRef(trigger.profile.id)} " +
+                                    "state=${describeCoordinatorState()}",
                             )
                         }
                         val pageObservation = sourceInspection.toObservation()
@@ -488,6 +664,12 @@ class AccessibilityScreenshotService : AccessibilityService() {
                             if (trigger is CaptureTrigger.Manual) showCaptureMessage(R.string.screenshot_failed)
                         }.isSuccess
                         if (!recognizingStarted) {
+                            if (trigger is CaptureTrigger.Auto) {
+                                AutoPageDiagnostics.log(
+                                    "stage=pipeline-failed reason=recognizing-service-start " +
+                                        "profile=${AutoPageDiagnostics.profileRef(trigger.profile.id)}",
+                                )
+                            }
                             sourceIconFuture.whenComplete { _, _ ->
                                 SourceIconCache.remove(sessionId)
                                 bitmap.recycle()
@@ -497,6 +679,12 @@ class AccessibilityScreenshotService : AccessibilityService() {
                             return
                         }
                         if (trigger is CaptureTrigger.Auto) activeAutoSessionId = sessionId
+                        if (trigger is CaptureTrigger.Auto) {
+                            AutoPageDiagnostics.log(
+                                "stage=analysis-start profile=${AutoPageDiagnostics.profileRef(trigger.profile.id)} " +
+                                    "session=$sessionId",
+                            )
+                        }
                         processCapture(
                             sessionId = sessionId,
                             bitmap = bitmap,
@@ -511,6 +699,12 @@ class AccessibilityScreenshotService : AccessibilityService() {
                         screenshotInProgress.set(false)
                         analysisSlots.release()
                         releaseCaptureAnalysis(trigger)
+                        if (trigger is CaptureTrigger.Auto) {
+                            AutoPageDiagnostics.log(
+                                "stage=capture-failed reason=take-screenshot-$errorCode " +
+                                    "profile=${AutoPageDiagnostics.profileRef(trigger.profile.id)}",
+                            )
+                        }
                         if (trigger is CaptureTrigger.Manual) showCaptureMessage(R.string.screenshot_failed)
                     }
                 },
@@ -520,6 +714,13 @@ class AccessibilityScreenshotService : AccessibilityService() {
             screenshotInProgress.set(false)
             analysisSlots.release()
             releaseCaptureAnalysis(trigger)
+            if (trigger is CaptureTrigger.Auto) {
+                AutoPageDiagnostics.log(
+                    "stage=capture-failed reason=take-screenshot-threw " +
+                        "error=${error.javaClass.simpleName} " +
+                        "profile=${AutoPageDiagnostics.profileRef(trigger.profile.id)}",
+                )
+            }
             if (trigger is CaptureTrigger.Manual) showCaptureMessage(R.string.screenshot_failed)
         }
     }
@@ -541,6 +742,10 @@ class AccessibilityScreenshotService : AccessibilityService() {
                 ) {
                     autoCoordinator.suppressUntilExit(trigger.profile.id)
                     stopRecognizingSession(sessionId)
+                    AutoPageDiagnostics.log(
+                        "stage=analysis-cancelled reason=manual-before-analysis " +
+                            "profile=${AutoPageDiagnostics.profileRef(trigger.profile.id)} session=$sessionId",
+                    )
                     return@execute
                 }
                 val analysisStartedAtMs = SystemClock.elapsedRealtime()
@@ -558,12 +763,21 @@ class AccessibilityScreenshotService : AccessibilityService() {
                 ) {
                     autoCoordinator.suppressUntilExit(trigger.profile.id)
                     stopRecognizingSession(sessionId)
+                    AutoPageDiagnostics.log(
+                        "stage=analysis-cancelled reason=manual-after-analysis " +
+                            "profile=${AutoPageDiagnostics.profileRef(trigger.profile.id)} session=$sessionId",
+                    )
                     return@execute
                 }
                 if (trigger is CaptureTrigger.Auto) {
                     autoCoordinator.onSuccess(trigger.profile.id)
                     activeMiniProgramTaskId = trigger.inspection.miniProgramTaskId
                     autoEvaluationPending.set(false)
+                    AutoPageDiagnostics.log(
+                        "stage=analysis-success profile=${AutoPageDiagnostics.profileRef(trigger.profile.id)} " +
+                            "session=$sessionId durationMs=$analysisDurationMs " +
+                            "state=${describeCoordinatorState()}",
+                    )
                 }
                 sendToLiveUpdateService(
                     sessionId = sessionId,
@@ -594,6 +808,10 @@ class AccessibilityScreenshotService : AccessibilityService() {
                 if (trigger is CaptureTrigger.Auto) {
                     stopRecognizingSession(sessionId)
                     retryAutoIfPending = true
+                    AutoPageDiagnostics.log(
+                        "stage=analysis-failed profile=${AutoPageDiagnostics.profileRef(trigger.profile.id)} " +
+                            "session=$sessionId error=${e.javaClass.simpleName}",
+                    )
                     return@execute
                 }
                 val failureData = RustBridge.NotificationData(
@@ -648,16 +866,29 @@ class AccessibilityScreenshotService : AccessibilityService() {
         }
     }
 
-    private fun isDeviceReadyForAutoCapture(): Boolean {
+    private data class AutoCaptureReadiness(
+        val interactive: Boolean,
+        val keyguardLocked: Boolean,
+    )
+
+    private fun autoCaptureReadiness(): AutoCaptureReadiness {
         val powerManager = getSystemService(PowerManager::class.java)
         val keyguardManager = getSystemService(KeyguardManager::class.java)
-        return powerManager?.isInteractive == true && keyguardManager?.isKeyguardLocked != true
+        return AutoCaptureReadiness(
+            interactive = powerManager?.isInteractive == true,
+            keyguardLocked = keyguardManager?.isKeyguardLocked == true,
+        )
     }
 
     private fun scheduleAutoEvaluation() {
         lastAutoEventAtMs = SystemClock.uptimeMillis()
         if (!mainHandler.hasCallbacks(autoEvaluateRunnable)) {
             mainHandler.postDelayed(autoEvaluateRunnable, AUTO_EVENT_DEBOUNCE_MS)
+            AutoPageDiagnostics.log(
+                "stage=debounce-scheduled delayMs=$AUTO_EVENT_DEBOUNCE_MS",
+            )
+        } else {
+            AutoPageDiagnostics.log("stage=debounce-extended")
         }
     }
 
@@ -665,8 +896,10 @@ class AccessibilityScreenshotService : AccessibilityService() {
         val elapsed = SystemClock.uptimeMillis() - lastAutoEventAtMs
         val remaining = AUTO_EVENT_DEBOUNCE_MS - elapsed
         if (remaining > 0L) {
+            AutoPageDiagnostics.log("stage=debounce-wait remainingMs=$remaining")
             mainHandler.postDelayed(autoEvaluateRunnable, remaining)
         } else {
+            AutoPageDiagnostics.log("stage=debounce-stable elapsedMs=$elapsed")
             evaluateAutoPage()
         }
     }
@@ -674,6 +907,7 @@ class AccessibilityScreenshotService : AccessibilityService() {
     private fun scheduleAutoReset() {
         if (!mainHandler.hasCallbacks(autoResetRunnable)) {
             mainHandler.postDelayed(autoResetRunnable, AUTO_REARM_DELAY_MS)
+            AutoPageDiagnostics.log("stage=rearm-check-scheduled delayMs=$AUTO_REARM_DELAY_MS")
         }
     }
 
@@ -682,6 +916,7 @@ class AccessibilityScreenshotService : AccessibilityService() {
         val profile = configuredProfiles
             .firstOrNull { it.id == activeProfileId }
         if (profile == null) {
+            AutoPageDiagnostics.log("stage=rearm reason=missing-active-profile")
             resetAutoPageState()
             return
         }
@@ -689,6 +924,11 @@ class AccessibilityScreenshotService : AccessibilityService() {
         val inspection = SourceIconResolver.inspect(this, lastActivityClassName)
         if (inspection.packageName != profile.packageName) {
             AppLog.d(TAG, "auto page session suspended outside source app")
+            AutoPageDiagnostics.log(
+                "stage=rearm-suspended reason=outside-source-app " +
+                    "profile=${AutoPageDiagnostics.profileRef(profile.id)} " +
+                    "observedPackage=${inspection.packageName}",
+            )
             return
         }
         val activeMatch = AutoPageMatcher.rank(
@@ -701,16 +941,96 @@ class AccessibilityScreenshotService : AccessibilityService() {
             activeMiniProgramTaskId == inspection.miniProgramTaskId
         if (activeMatch?.textMatched == true && sameMiniProgramTask) {
             AppLog.d(TAG, "auto page remains suppressed: learned identity is still foreground")
+            AutoPageDiagnostics.log(
+                "stage=rearm-suppressed reason=identity-still-matched " +
+                    "profile=${AutoPageDiagnostics.profileRef(profile.id)}",
+            )
             return
         }
 
         AppLog.d(TAG, "auto page rearmed after confirmed page exit")
+        AutoPageDiagnostics.log(
+            "stage=rearm-confirmed profile=${AutoPageDiagnostics.profileRef(profile.id)}",
+        )
         resetAutoPageState()
     }
 
     private fun resetAutoPageState() {
+        AutoPageDiagnostics.log("stage=coordinator-reset previous=${describeCoordinatorState()}")
         autoCoordinator.reset()
         activeMiniProgramTaskId = -1
+    }
+
+    internal fun diagnosticAutoPageSnapshot(): String {
+        if (!AutoPageDiagnostics.enabled) return "disabled"
+        val root = runCatching { rootInActiveWindow }.getOrNull()
+        val rootPackage = root?.packageName?.toString().orEmpty()
+        val rootClass = root?.className?.toString().orEmpty()
+        return buildString {
+            append("events=")
+            append(diagnosticEventCount)
+            append(" evaluations=")
+            append(diagnosticEvaluationCount)
+            append(" globalEnabled=")
+            append(AutoPageProfileStore.enabled)
+            append(" serviceEventTypes=")
+            append(serviceInfo.eventTypes)
+            append(" servicePackages=")
+            append(serviceInfo.packageNames?.joinToString().orEmpty())
+            append(" configured=")
+            append(configuredProfiles.joinToString { AutoPageDiagnostics.profileRef(it.id) })
+            append(" available=")
+            append(availableProfiles.joinToString { AutoPageDiagnostics.profileRef(it.id) })
+            append(" targetPackages=")
+            append(targetPackages.joinToString())
+            append(" lastActivity=")
+            append(lastActivityClassName)
+            append(" root=")
+            append(rootPackage)
+            append('/')
+            append(rootClass)
+            append(" manualBusy=")
+            append(manualAnalysisInProgress.get())
+            append(" autoBusy=")
+            append(autoAnalysisInProgress.get())
+            append(" screenshotBusy=")
+            append(screenshotInProgress.get())
+            append(" pending=")
+            append(autoEvaluationPending.get())
+            append(" coordinator=")
+            append(describeCoordinatorState())
+        }
+    }
+
+    private fun describeCoordinatorState(): String {
+        val snapshot = autoCoordinator.diagnosticSnapshot()
+        return "profile=${snapshot.activeProfileId?.let(AutoPageDiagnostics::profileRef) ?: "-"}" +
+            ",attempts=${snapshot.attempts}" +
+            ",fired=${snapshot.fired}" +
+            ",signature=${AutoPageDiagnostics.fingerprint(snapshot.lastContentSignature)}"
+    }
+
+    private fun logAutoEvent(event: AccessibilityEvent, decision: String) {
+        if (!AutoPageDiagnostics.enabled) return
+        val now = SystemClock.uptimeMillis()
+        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED &&
+            now - lastDiagnosticContentEventAtMs < 250L
+        ) {
+            diagnosticContentEventsSuppressed++
+            return
+        }
+        val suppressed = diagnosticContentEventsSuppressed
+        diagnosticContentEventsSuppressed = 0
+        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) {
+            lastDiagnosticContentEventAtMs = now
+        }
+        AutoPageDiagnostics.log(
+            "stage=event count=$diagnosticEventCount " +
+                "type=${AutoPageDiagnostics.eventTypeName(event.eventType)} " +
+                "package=${event.packageName} class=${event.className} " +
+                "lastActivity=$lastActivityClassName decision=$decision " +
+                "suppressedContentEvents=$suppressed coordinator=${describeCoordinatorState()}",
+        )
     }
 
     private fun isSystemUiPackage(packageName: String): Boolean =

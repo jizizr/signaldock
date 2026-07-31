@@ -41,6 +41,13 @@ data class AutoPageMatch(
     val textMatched: Boolean,
 )
 
+data class AutoTriggerSnapshot(
+    val activeProfileId: String?,
+    val attempts: Int,
+    val lastContentSignature: String,
+    val fired: Boolean,
+)
+
 object AutoPageProfileStore {
     private const val PREFS_NAME = "auto_page_profiles"
     private const val KEY_ENABLED = "enabled"
@@ -354,6 +361,14 @@ class AutoTriggerCoordinator {
 
     @Synchronized
     fun stateForTest(): Triple<String?, Int, Boolean> = Triple(activeProfileId, attempts, fired)
+
+    @Synchronized
+    fun diagnosticSnapshot(): AutoTriggerSnapshot = AutoTriggerSnapshot(
+        activeProfileId = activeProfileId,
+        attempts = attempts,
+        lastContentSignature = lastContentSignature,
+        fired = fired,
+    )
 }
 
 object IconFingerprint {

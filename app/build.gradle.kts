@@ -26,6 +26,9 @@ val hasReleaseSigningConfig = releaseSigningPropertiesFile.isFile &&
 val sourceWindowDiagnostics = providers.gradleProperty("sourceWindowDiagnostics")
     .map(String::toBoolean)
     .orElse(false)
+val autoPageDiagnostics = providers.gradleProperty("autoPageDiagnostics")
+    .map(String::toBoolean)
+    .orElse(false)
 val defaultSdkDir = when {
     System.getProperty("os.name").startsWith("Mac", ignoreCase = true) ->
         "${System.getProperty("user.home")}/Library/Android/sdk"
@@ -132,6 +135,11 @@ android {
             "boolean",
             "SOURCE_WINDOW_DIAGNOSTICS",
             sourceWindowDiagnostics.get().toString(),
+        )
+        buildConfigField(
+            "boolean",
+            "AUTO_PAGE_DIAGNOSTICS",
+            autoPageDiagnostics.get().toString(),
         )
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"

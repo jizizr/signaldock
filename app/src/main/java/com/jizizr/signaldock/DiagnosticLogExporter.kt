@@ -101,6 +101,7 @@ object DiagnosticLogExporter {
             appendLine("versionName=${packageInfo.versionName.orEmpty()}")
             appendLine("versionCode=${packageInfo.longVersionCode}")
             appendLine("sourceWindowDiagnostics=${BuildConfig.SOURCE_WINDOW_DIAGNOSTICS}")
+            appendLine("autoPageDiagnostics=${BuildConfig.AUTO_PAGE_DIAGNOSTICS}")
             appendLine("processId=${Process.myPid()}")
             appendLine("processUptimeMs=${SystemClock.elapsedRealtime()}")
             appendLine("memoryUsedMb=$memoryUsedMb")
@@ -119,6 +120,15 @@ object DiagnosticLogExporter {
             appendLine("autoPageEnabled=${AutoPageProfileStore.enabled}")
             appendLine("autoPageProfileCount=${autoPageProfiles.size}")
             appendLine("autoPageEnabledProfileCount=${autoPageProfiles.count { it.enabled }}")
+            appendLine("autoPageNotificationLockCount=${AutoPageNotificationLockStore.loadAll().size}")
+            appendLine(
+                "autoPageRuntime=${AccessibilityScreenshotService.instance?.diagnosticAutoPageSnapshot() ?: "service-disconnected"}",
+            )
+            autoPageProfiles.forEachIndexed { index, profile ->
+                appendLine(
+                    "autoPageProfile[$index]=${AutoPageDiagnostics.describeProfile(profile)}",
+                )
+            }
             appendLine("diagnosticLoggingEnabled=${DiagnosticLogStore.enabled}")
             appendLine("droppedLogEntries=${DiagnosticLogStore.droppedCount}")
             appendLine()

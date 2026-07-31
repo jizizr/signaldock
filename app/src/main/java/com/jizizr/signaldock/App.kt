@@ -22,7 +22,8 @@ class App : Application() {
         AppLog.i(
             "App",
             "Application process started sourceWindowDiagnostics=" +
-                BuildConfig.SOURCE_WINDOW_DIAGNOSTICS,
+                BuildConfig.SOURCE_WINDOW_DIAGNOSTICS +
+                " autoPageDiagnostics=${BuildConfig.AUTO_PAGE_DIAGNOSTICS}",
         )
         // minSdk=36 >= P(28), always apply bypass
         HiddenApiBypass.addHiddenApiExemptions("")
