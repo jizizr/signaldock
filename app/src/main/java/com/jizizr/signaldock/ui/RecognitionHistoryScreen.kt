@@ -1,8 +1,6 @@
 package com.jizizr.signaldock.ui
 
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.background
-import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -34,7 +32,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -63,6 +60,7 @@ import top.yukonga.miuix.kmp.icon.extended.Redo
 import top.yukonga.miuix.kmp.icon.extended.Refresh
 import top.yukonga.miuix.kmp.window.WindowDialog
 import top.yukonga.miuix.kmp.theme.MiuixTheme
+import top.yukonga.miuix.kmp.utils.PressFeedbackType
 import top.yukonga.miuix.kmp.utils.overScrollVertical
 import top.yukonga.miuix.kmp.utils.scrollEndHaptic
 import java.time.Instant
@@ -110,13 +108,18 @@ internal fun RecognitionHistoryScreen(
                 },
             )
         },
-        snackbarHost = { SnackbarHost(state = snackbarHostState) },
+        snackbarHost = {
+            SnackbarHost(
+                state = snackbarHostState,
+                modifier = Modifier.padding(bottom = RootNavigationBarClearance),
+            )
+        },
     ) { padding ->
         val layoutDirection = LocalLayoutDirection.current
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
-                .background(MiuixTheme.colorScheme.background)
+                .background(MiuixTheme.colorScheme.surface)
                 .scrollEndHaptic()
                 .overScrollVertical()
                 .nestedScroll(scrollBehavior.nestedScrollConnection),
@@ -124,7 +127,7 @@ internal fun RecognitionHistoryScreen(
                 start = padding.calculateStartPadding(layoutDirection) + 16.dp,
                 top = padding.calculateTopPadding() + 16.dp,
                 end = padding.calculateEndPadding(layoutDirection) + 16.dp,
-                bottom = padding.calculateBottomPadding() + 96.dp,
+                bottom = padding.calculateBottomPadding() + RootNavigationBarClearance,
             ),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
@@ -229,7 +232,7 @@ private fun HistoryEmptyState(loading: Boolean) {
                 Text(
                     text = stringResource(R.string.history_empty_summary),
                     style = MiuixTheme.textStyles.subtitle,
-                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                    color = MiuixTheme.colorScheme.onSurface.copy(alpha = 0.72f),
                 )
             }
         }
@@ -266,16 +269,11 @@ private fun RecognitionHistoryCard(
     Card(
         modifier = Modifier.fillMaxWidth(),
         insideMargin = PaddingValues(16.dp),
+        pressFeedbackType = PressFeedbackType.Sink,
+        onClick = onClick,
     ) {
         Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
-                .clickable(
-                    role = Role.Button,
-                    onClick = onClick,
-                )
-                .padding(bottom = 12.dp),
+            modifier = Modifier.fillMaxWidth(),
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -286,6 +284,7 @@ private fun RecognitionHistoryCard(
                     text = summary,
                     style = MiuixTheme.textStyles.headline1,
                     fontWeight = FontWeight.Medium,
+                    color = MiuixTheme.colorScheme.onSurface,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
@@ -306,12 +305,14 @@ private fun RecognitionHistoryCard(
                 Text(
                     text = secondary,
                     style = MiuixTheme.textStyles.body1,
-                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                    color = MiuixTheme.colorScheme.onSurface.copy(alpha = 0.72f),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
             }
         }
+
+        Spacer(Modifier.height(12.dp))
 
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -322,14 +323,14 @@ private fun RecognitionHistoryCard(
                 Text(
                     text = timeText,
                     style = MiuixTheme.textStyles.footnote1,
-                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                    color = MiuixTheme.colorScheme.onSurface.copy(alpha = 0.72f),
                 )
                 if (record.providerName.isNotBlank()) {
                     Spacer(Modifier.height(2.dp))
                     Text(
                         text = record.providerName,
                         style = MiuixTheme.textStyles.footnote1,
-                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                        color = MiuixTheme.colorScheme.onSurface.copy(alpha = 0.72f),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )

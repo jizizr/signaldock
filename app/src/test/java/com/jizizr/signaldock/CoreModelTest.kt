@@ -282,4 +282,285 @@ class CoreModelTest {
         assertEquals("示例门店 · 示例饮品", recognitionHistorySummary(record))
     }
 
+    @Test
+    fun autoPageKeywords_removeDynamicCredentialsAndPrices() {
+        val keywords = AutoPageProfileStore.sanitizeKeywords(
+            listOf("取餐码，示例门店，A1024，¥18.00，订单详情"),
+        )
+
+        assertTrue(keywords.contains("取餐码"))
+        assertTrue(keywords.contains("示例门店"))
+        assertTrue(keywords.contains("订单详情"))
+        assertFalse(keywords.any { it.contains("1024") || it.contains("18") })
+    }
+
+    @Test
+    fun autoPageMatcher_requiresIdentityAndFindsKeywords() {
+        val profile = AutoPageProfile(
+            id = "profile",
+            name = "示例取餐页",
+            enabled = true,
+            packageName = "com.tencent.mm",
+            activityClassName = "AppBrandUI",
+            miniProgramLabel = "示例小程序",
+            miniProgramIconHash = "abc",
+            keywords = listOf("取餐码", "示例门店"),
+            excludedKeywords = emptyList(),
+            nodeSignature = listOf("订单详情"),
+            createdAtMs = 0,
+        )
+        val observation = PageObservationSnapshot(
+            packageName = "com.tencent.mm",
+            activityClassName = "AppBrandUI1",
+            isWechatMiniProgram = true,
+            miniProgramLabel = "示例小程序",
+            miniProgramIconHash = "abc",
+            stableKeywords = listOf("订单详情", "示例门店", "取餐码"),
+        )
+
+        val match = AutoPageMatcher.rank(observation, listOf(profile)).single()
+
+        assertTrue(match.textMatched)
+        assertTrue(match.score > 0.8)
+        assertFalse(
+            AutoPageMatcher.rank(
+                observation.copy(stableKeywords = listOf("示例门店", "订单详情")),
+                listOf(profile),
+            ).single().textMatched,
+        )
+        assertFalse(
+            AutoPageMatcher.rank(
+                observation.copy(stableKeywords = observation.stableKeywords + "已完成"),
+                listOf(profile.copy(excludedKeywords = listOf("已完成"))),
+            ).single().textMatched,
+        )
+        assertTrue(
+            AutoPageMatcher.rank(
+                observation.copy(
+                    miniProgramLabel = "其他小程序",
+                    miniProgramIconHash = "different",
+                ),
+                listOf(profile),
+            ).isEmpty(),
+        )
+    }
+
+    @Test
+    fun autoPageMatcher_neverTreatsRegularWechatAsAMiniProgramPage() {
+        val profile = AutoPageProfile(
+            id = "wechat-profile",
+            name = "示例小程序",
+            enabled = true,
+            packageName = SourceIconResolver.WECHAT_PACKAGE,
+            activityClassName = "com.tencent.mm.plugin.appbrand.ui.AppBrandUI",
+            miniProgramLabel = "示例小程序",
+            miniProgramIconHash = "icon-hash",
+            keywords = listOf("取餐码"),
+            excludedKeywords = emptyList(),
+            nodeSignature = emptyList(),
+            createdAtMs = 0,
+        )
+        val regularWechat = PageObservationSnapshot(
+            packageName = SourceIconResolver.WECHAT_PACKAGE,
+            activityClassName = "com.tencent.mm.ui.LauncherUI",
+            miniProgramLabel = "示例小程序",
+            miniProgramIconHash = "icon-hash",
+            stableKeywords = listOf("取餐码"),
+        )
+
+        assertTrue(AutoPageMatcher.rank(regularWechat, listOf(profile)).isEmpty())
+    }
+
+    @Test
+    fun autoPageMatcher_requiresLearnedMiniProgramIdentityWhenAvailable() {
+        val profile = AutoPageProfile(
+            id = "wechat-profile",
+            name = "示例小程序",
+            enabled = true,
+            packageName = SourceIconResolver.WECHAT_PACKAGE,
+            activityClassName = "com.tencent.mm.plugin.appbrand.ui.AppBrandUI",
+            miniProgramLabel = "示例小程序",
+            miniProgramIconHash = "icon-hash",
+            keywords = listOf("取餐码", "示例小程序"),
+            excludedKeywords = emptyList(),
+            nodeSignature = emptyList(),
+            createdAtMs = 0,
+        )
+        val identityUnavailable = PageObservationSnapshot(
+            packageName = SourceIconResolver.WECHAT_PACKAGE,
+            activityClassName = "com.tencent.mm.plugin.appbrand.ui.AppBrandUI2",
+            isWechatMiniProgram = true,
+            miniProgramLabel = "",
+            miniProgramIconHash = "",
+            stableKeywords = listOf("取餐码"),
+        )
+
+        assertTrue(AutoPageMatcher.rank(identityUnavailable, listOf(profile)).isEmpty())
+        assertTrue(isWechatMiniProgramActivity(identityUnavailable.activityClassName))
+        assertFalse(isWechatMiniProgramActivity("com.tencent.mm.ui.LauncherUI"))
+    }
+
+    @Test
+    fun autoTriggerCoordinator_allowsOneRetryThenRearmsAfterReset() {
+        val coordinator = AutoTriggerCoordinator()
+
+        assertTrue(coordinator.canAttempt("profile", "first"))
+        coordinator.onAttempt("profile", "first")
+        assertFalse(coordinator.canAttempt("profile", "first"))
+        assertTrue(coordinator.canAttempt("profile", "changed"))
+        coordinator.onAttempt("profile", "changed")
+        assertFalse(coordinator.canAttempt("profile", "third"))
+
+        coordinator.reset()
+        assertTrue(coordinator.canAttempt("profile", "first"))
+        coordinator.onAttempt("profile", "first")
+        coordinator.onSuccess("profile")
+        assertFalse(coordinator.canAttempt("profile", "changed"))
+    }
+
+    @Test
+    fun autoPageMatcher_detectsDefiniteWindowIdentityExit() {
+        val profile = AutoPageProfile(
+            id = "wechat-profile",
+            name = "示例小程序",
+            enabled = true,
+            packageName = SourceIconResolver.WECHAT_PACKAGE,
+            activityClassName = "com.tencent.mm.plugin.appbrand.ui.AppBrandUI00",
+            miniProgramLabel = "示例小程序",
+            miniProgramIconHash = "icon-hash",
+            keywords = listOf("取餐码"),
+            excludedKeywords = emptyList(),
+            nodeSignature = emptyList(),
+            createdAtMs = 0,
+        )
+
+        assertFalse(
+            AutoPageMatcher.isDefiniteIdentityExit(
+                profile,
+                "com.miui.home",
+                "com.miui.home.launcher.Launcher",
+            ),
+        )
+        assertTrue(
+            AutoPageMatcher.isDefiniteIdentityExit(
+                profile,
+                SourceIconResolver.WECHAT_PACKAGE,
+                "com.tencent.mm.ui.LauncherUI",
+            ),
+        )
+        assertFalse(
+            AutoPageMatcher.isDefiniteIdentityExit(
+                profile,
+                SourceIconResolver.WECHAT_PACKAGE,
+                "com.tencent.mm.plugin.appbrand.ui.AppBrandUI00",
+            ),
+        )
+
+        val legacyNativeProfile = profile.copy(
+            packageName = "com.example.order",
+            activityClassName = "android.widget.FrameLayout",
+        )
+        assertFalse(
+            AutoPageMatcher.isDefiniteIdentityExit(
+                legacyNativeProfile,
+                "com.example.order",
+                "com.example.order.OrderDetailActivity",
+            ),
+        )
+        assertTrue(
+            AutoPageMatcher.isDefiniteIdentityExit(
+                legacyNativeProfile.copy(
+                    activityClassName = "com.example.order.OrderDetailActivity",
+                ),
+                "com.example.order",
+                "com.example.order.OrderListActivity",
+            ),
+        )
+    }
+
+    @Test
+    fun autoPageMatcher_rejectsNonTargetActivitiesBeforeNodeInspection() {
+        val wechatProfile = AutoPageProfile(
+            id = "wechat-profile",
+            name = "示例小程序",
+            enabled = true,
+            packageName = SourceIconResolver.WECHAT_PACKAGE,
+            activityClassName = "com.tencent.mm.plugin.appbrand.ui.AppBrandUI00",
+            miniProgramLabel = "示例小程序",
+            miniProgramIconHash = "icon-hash",
+            keywords = listOf("取餐码"),
+            excludedKeywords = emptyList(),
+            nodeSignature = emptyList(),
+            createdAtMs = 0,
+        )
+
+        assertTrue(
+            AutoPageMatcher.canMatchIdentity(
+                wechatProfile,
+                SourceIconResolver.WECHAT_PACKAGE,
+                "com.tencent.mm.plugin.appbrand.ui.AppBrandUI02",
+            ),
+        )
+        assertFalse(
+            AutoPageMatcher.canMatchIdentity(
+                wechatProfile,
+                SourceIconResolver.WECHAT_PACKAGE,
+                "com.tencent.mm.ui.LauncherUI",
+            ),
+        )
+
+        val nativeProfile = wechatProfile.copy(
+            packageName = "com.example.order",
+            activityClassName = "com.example.order.OrderDetailActivity",
+        )
+        assertTrue(
+            AutoPageMatcher.canMatchIdentity(
+                nativeProfile,
+                "com.example.order",
+                "com.example.order.OrderDetailActivity",
+            ),
+        )
+        assertFalse(
+            AutoPageMatcher.canMatchIdentity(
+                nativeProfile,
+                "com.example.order",
+                "com.example.order.OrderListActivity",
+            ),
+        )
+        assertTrue(
+            AutoPageMatcher.canMatchIdentity(
+                nativeProfile.copy(activityClassName = "android.widget.FrameLayout"),
+                "com.example.order",
+                "com.example.order.OrderDetailActivity",
+            ),
+        )
+    }
+
+    @Test
+    fun autoPageMatcher_doesNotTextMatchAnOrderListWithoutTheConfiguredKeyword() {
+        val profile = AutoPageProfile(
+            id = "pickup-page",
+            name = "取餐页",
+            enabled = true,
+            packageName = SourceIconResolver.WECHAT_PACKAGE,
+            activityClassName = "com.tencent.mm.plugin.appbrand.ui.AppBrandUI",
+            miniProgramLabel = "示例小程序",
+            miniProgramIconHash = "icon-hash",
+            keywords = listOf("取餐码", "示例小程序"),
+            excludedKeywords = emptyList(),
+            nodeSignature = emptyList(),
+            createdAtMs = 0,
+        )
+        val orderList = PageObservationSnapshot(
+            packageName = SourceIconResolver.WECHAT_PACKAGE,
+            activityClassName = "com.tencent.mm.plugin.appbrand.ui.AppBrandUI00",
+            isWechatMiniProgram = true,
+            miniProgramLabel = "示例小程序",
+            miniProgramIconHash = "icon-hash",
+            stableKeywords = listOf("示例小程序", "门店订单", "已完成", "再来一单"),
+        )
+
+        assertFalse(AutoPageMatcher.rank(orderList, listOf(profile)).single().textMatched)
+    }
+
 }

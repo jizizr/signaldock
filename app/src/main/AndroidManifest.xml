@@ -66,6 +66,12 @@
             android:exported="false"
             android:theme="@style/Theme.Signaldock" />
 
+        <activity
+            android:name=".AutoPageActivity"
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize"
+            android:theme="@style/Theme.Signaldock" />
+
         <!--  QR 结果展示 Activity （通知按钮调起） -->
         <!--  taskAffinity="" → 独立任务栈，返回手势直接回桌面而非 MainActivity -->
         <activity

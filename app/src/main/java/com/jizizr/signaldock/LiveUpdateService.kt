@@ -36,9 +36,19 @@ class LiveUpdateService : Service() {
         const val EXTRA_ITEM_DETAIL = "extra_item_detail"
         const val EXTRA_MERCHANT   = "extra_merchant"
         const val EXTRA_SESSION_ID = "extra_session_id"
+        const val EXTRA_AUTO_PROFILE_ID = "extra_auto_profile_id"
 
-        private val sessionCounter = AtomicInteger(2000)
-        fun newSessionId(): Int = sessionCounter.getAndIncrement()
+        private const val MIN_SESSION_ID = 2000
+        private const val MAX_SESSION_ID = Int.MAX_VALUE - 4000
+        private val sessionCounter = AtomicInteger(
+            (System.currentTimeMillis() % 1_000_000_000L)
+                .toInt()
+                .coerceAtLeast(MIN_SESSION_ID),
+        )
+
+        fun newSessionId(): Int = sessionCounter.getAndUpdate { current ->
+            if (current >= MAX_SESSION_ID) MIN_SESSION_ID else current + 1
+        }
 
     }
 
@@ -67,10 +77,15 @@ class LiveUpdateService : Service() {
                 val sessionId = intent.getIntExtra(EXTRA_SESSION_ID, -1)
                 if (sessionId != -1) {
                     AppLog.d(TAG, "Stopping session $sessionId")
+                    val releasedAutoLock = AutoPageNotificationLockStore.releaseBySession(sessionId)
                     provider.cancelForSession(this, sessionId)
                     activeSessions.remove(sessionId)
                     SessionQrBitmapStore.remove(sessionId)
                     SourceIconCache.remove(sessionId)
+                    releasedAutoLock?.let { lock ->
+                        AccessibilityScreenshotService.instance
+                            ?.onAutoNotificationReleased(lock.profileId, lock.notificationId)
+                    }
                     val notifId = provider.notificationIdForSession(sessionId)
                     if (activeSessions.isEmpty()) {
                         synchronized(foregroundLock) {
@@ -155,6 +170,14 @@ class LiveUpdateService : Service() {
                     ),
                     makeDismissPendingIntent(sessionId),
                 )
+                intent.getStringExtra(EXTRA_AUTO_PROFILE_ID)
+                    ?.takeIf(String::isNotBlank)
+                    ?.let { profileId ->
+                        val notificationId = provider.notificationIdForSession(sessionId)
+                        AutoPageNotificationLockStore.lock(profileId, sessionId, notificationId)
+                        AccessibilityScreenshotService.instance
+                            ?.onAutoNotificationPublished(profileId, notificationId)
+                    }
             }
             else -> {}
         }
@@ -167,7 +190,10 @@ class LiveUpdateService : Service() {
             isForeground = false
             foregroundSessionId = -1
         }
-        activeSessions.keys.forEach { provider.cancelForSession(this, it) }
+        // Do not release an auto-page lock here. A service restart is not a user
+        // acknowledgement; the persisted lock is reconciled against active
+        // notifications when the accessibility service reconnects.
+        activeSessions.keys.forEach { sessionId -> provider.cancelForSession(this, sessionId) }
         activeSessions.clear()
         SessionQrBitmapStore.clear()
         SourceIconCache.clear()

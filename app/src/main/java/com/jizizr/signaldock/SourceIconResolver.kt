@@ -8,14 +8,19 @@ import android.graphics.drawable.Icon
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.core.graphics.drawable.toBitmap
 import androidx.core.graphics.scale
-import java.util.ArrayDeque
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.max
 import kotlin.math.roundToInt
 
 data class SourceAppInspection(
     val packageName: String?,
+    val activityClassName: String,
+    val miniProgramTaskId: Int,
+    val isWechatMiniProgram: Boolean,
     val miniProgramIconBounds: Rect?,
+    val miniProgramLabel: String,
+    val miniProgramIconHash: String,
+    val stableKeywords: List<String>,
 )
 
 data class ResolvedSourceIcon(
@@ -118,31 +123,62 @@ object SourceIconResolver {
         "com.android.systemui",
         "com.jizizr.signaldock",
     )
-    private val iconKeywords = listOf(
-        "appbrand", "mini", "avatar", "head", "logo", "icon", "小程序", "头像",
-    )
-
-    fun inspect(service: AccessibilityService): SourceAppInspection {
-        val roots = buildList {
-            service.rootInActiveWindow?.let(::add)
-            service.windows
-                .asSequence()
-                .sortedByDescending { it.isFocused || it.isActive }
+    fun inspect(
+        service: AccessibilityService,
+        activityClassName: String = "",
+    ): SourceAppInspection {
+        val activeRoot = service.rootInActiveWindow
+        val root = activeRoot.takeIf(::isUsableRoot)
+            ?: service.windows.asSequence()
+                .filter { it.isFocused || it.isActive }
                 .mapNotNull { it.root }
-                .forEach(::add)
-        }
-        val root = roots.firstOrNull { node ->
-            node.packageName?.toString()?.let { it !in ignoredPackages } == true
-        }
+                .firstOrNull(::isUsableRoot)
+            ?: service.windows.asSequence()
+                .mapNotNull { it.root }
+                .firstOrNull(::isUsableRoot)
         val packageName = root?.packageName?.toString()
-        val miniProgramBounds = if (packageName == WECHAT_PACKAGE) {
-            findMiniProgramIconBounds(root)
+        val foregroundMiniProgram = if (packageName == WECHAT_PACKAGE) {
+            AppShell.findForegroundWechatMiniProgram()
         } else {
             null
         }
-        AppLog.i(TAG, "foreground package=$packageName miniProgramNode=${miniProgramBounds != null}")
-        return SourceAppInspection(packageName, miniProgramBounds)
+        val resolvedActivityClassName = foregroundMiniProgram?.activityClassName ?: activityClassName
+            .takeIf { candidate ->
+                candidate.isNotBlank() &&
+                    (packageName.isNullOrBlank() || candidate.startsWith(packageName))
+            }
+            ?: root?.className?.toString().orEmpty()
+        val nodeSnapshot = collectPageNodeSnapshot(
+            root = root,
+            includeMiniProgramIcon = foregroundMiniProgram != null,
+        )
+        val miniProgramTask = if (foregroundMiniProgram != null) {
+            AppShell.findWechatMiniProgramTask(foregroundMiniProgram.taskId)
+                ?: AppShell.findWechatMiniProgramTask()
+        } else {
+            null
+        }
+        val miniProgramIconHash = miniProgramTask?.icon?.let(IconFingerprint::hash).orEmpty()
+        miniProgramTask?.icon?.takeUnless(Bitmap::isRecycled)?.recycle()
+        AppLog.d(
+            TAG,
+            "foreground package=$packageName miniProgramNode=" +
+                "${nodeSnapshot.miniProgramIconBounds != null}",
+        )
+        return SourceAppInspection(
+            packageName = packageName,
+            activityClassName = resolvedActivityClassName,
+            miniProgramTaskId = miniProgramTask?.taskId ?: foregroundMiniProgram?.taskId ?: -1,
+            isWechatMiniProgram = foregroundMiniProgram != null,
+            miniProgramIconBounds = nodeSnapshot.miniProgramIconBounds,
+            miniProgramLabel = miniProgramTask?.label.orEmpty(),
+            miniProgramIconHash = miniProgramIconHash,
+            stableKeywords = nodeSnapshot.stableKeywords,
+        )
     }
+
+    private fun isUsableRoot(node: AccessibilityNodeInfo?): Boolean =
+        node?.packageName?.toString()?.let { it !in ignoredPackages } == true
 
     fun resolveInitialIcon(
         context: Context,
@@ -151,7 +187,9 @@ object SourceIconResolver {
     ): ResolvedSourceIcon? {
         var recentTaskId: Int? = null
         if (inspection.packageName == WECHAT_PACKAGE) {
-            val recentTask = AppShell.findWechatMiniProgramTask()
+            val recentTask = AppShell.findWechatMiniProgramTask(
+                inspection.miniProgramTaskId.takeIf { it >= 0 },
+            ) ?: AppShell.findWechatMiniProgramTask()
             recentTaskId = recentTask?.taskId
             recentTask?.icon?.let {
                 return ResolvedSourceIcon(it, "wechat_recent_task", recentTask.taskId)
@@ -178,38 +216,6 @@ object SourceIconResolver {
         }
     }
 
-    private fun findMiniProgramIconBounds(root: AccessibilityNodeInfo): Rect? {
-        val queue = ArrayDeque<AccessibilityNodeInfo>().apply { add(root) }
-        var best: Pair<Int, Rect>? = null
-        var visited = 0
-        while (queue.isNotEmpty() && visited < 2000) {
-            val node = queue.removeFirst()
-            visited++
-            val bounds = Rect().also(node::getBoundsInScreen)
-            val width = bounds.width()
-            val height = bounds.height()
-            if (width in 36..320 && height in 36..320) {
-                val descriptor = buildString {
-                    append(node.viewIdResourceName.orEmpty())
-                    append(' ')
-                    append(node.contentDescription?.toString().orEmpty())
-                    append(' ')
-                    append(node.className?.toString().orEmpty())
-                }.lowercase()
-                val keywordScore = iconKeywords.count(descriptor::contains) * 40
-                val imageScore = if (descriptor.contains("image")) 25 else 0
-                val squareScore = if (max(width, height).toFloat() / minOf(width, height) <= 1.35f) 15 else 0
-                val edgePenalty = if (bounds.top < 260 && bounds.left > 800) 80 else 0
-                val score = keywordScore + imageScore + squareScore - edgePenalty
-                if (score >= 60 && (best == null || score > best.first)) {
-                    best = score to Rect(bounds)
-                }
-            }
-            repeat(node.childCount) { index -> node.getChild(index)?.let(queue::addLast) }
-        }
-        return best?.second
-    }
-
     private fun cropBounds(source: Bitmap, requested: Rect): Bitmap? {
         val clipped = Rect(requested)
         if (!clipped.intersect(0, 0, source.width, source.height)) return null
@@ -227,4 +233,11 @@ object SourceIconResolver {
                     .also { if (it !== cropped) cropped.recycle() }
             }
     }
+
 }
+
+private val WECHAT_MINI_PROGRAM_ACTIVITY_REGEX =
+    Regex("(^|.*\\.)AppBrandUI\\d*(\\$.*)?$")
+
+internal fun isWechatMiniProgramActivity(className: String): Boolean =
+    WECHAT_MINI_PROGRAM_ACTIVITY_REGEX.matches(className.trim())

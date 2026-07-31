@@ -15,7 +15,6 @@ import androidx.core.graphics.scale
 import rikka.shizuku.Shizuku
 import rikka.shizuku.ShizukuBinderWrapper
 import rikka.shizuku.SystemServiceHelper
-import java.util.concurrent.Executors
 
 /**
  * 全局唯一的 Shizuku 管理器。
@@ -33,11 +32,21 @@ object AppShell {
 
     data class WechatMiniProgramTask(
         val taskId: Int,
+        val label: String,
         val icon: Bitmap?,
     )
 
+    data class WechatMiniProgramForeground(
+        val taskId: Int,
+        val activityClassName: String,
+    )
+
     private val mainHandler = Handler(Looper.getMainLooper())
-    private val privilegedExecutor = Executors.newSingleThreadExecutor()
+    private val privilegedExecutor = newIdleExecutor(
+        "SignalDock-Privileged",
+        1,
+        android.os.Process.THREAD_PRIORITY_BACKGROUND,
+    )
 
     /** 检查 Shizuku 是否可用且已授权 */
     val isShizukuAvailable: Boolean
@@ -119,7 +128,7 @@ object AppShell {
      */
     @android.annotation.SuppressLint("BlockedPrivateApi")
     @Suppress("DEPRECATION")
-    fun findWechatMiniProgramTask(): WechatMiniProgramTask? {
+    fun findWechatMiniProgramTask(expectedTaskId: Int? = null): WechatMiniProgramTask? {
         if (!isShizukuAvailable) {
             AppLog.w(TAG, "Cannot read recent tasks: Shizuku unavailable")
             return null
@@ -150,13 +159,13 @@ object AppShell {
 
             for (item in tasks) {
                 val task = item as? ActivityManager.RecentTaskInfo ?: continue
+                if (expectedTaskId != null && task.taskId != expectedTaskId) continue
                 val component = task.topActivity ?: task.baseActivity ?: task.baseIntent.component
                 if (component?.packageName != WECHAT_PACKAGE ||
                     !component.className.contains(WECHAT_APP_BRAND_ACTIVITY)
                 ) {
                     continue
                 }
-
                 val taskDescription = task.taskDescription
                 val taskIcon = taskDescription?.let { description ->
                     description.javaClass
@@ -188,7 +197,11 @@ object AppShell {
                     "Found WeChat mini-program recent task " +
                         "taskId=${task.taskId} component=${component.className} icon=${scaled != null}",
                 )
-                return WechatMiniProgramTask(task.taskId, scaled)
+                return WechatMiniProgramTask(
+                    taskId = task.taskId,
+                    label = taskDescription?.label.orEmpty(),
+                    icon = scaled,
+                )
             }
 
             AppLog.w(TAG, "No WeChat mini-program task with an icon found in Recents")
@@ -196,6 +209,71 @@ object AppShell {
         } catch (error: Throwable) {
             AppLog.e(TAG, "Failed to read WeChat mini-program icon from Recents", error)
             null
+        }
+    }
+
+    /** Returns the actual foreground WeChat mini-program task without reading its icon. */
+    @android.annotation.SuppressLint("BlockedPrivateApi")
+    fun findForegroundWechatMiniProgram(): WechatMiniProgramForeground? {
+        if (!isShizukuAvailable) return null
+        return try {
+            val originalBinder = SystemServiceHelper.getSystemService("activity_task")
+                ?: throw IllegalStateException("ActivityTaskManager binder not available")
+            val wrapper = ShizukuBinderWrapper(originalBinder)
+            val stubClass = Class.forName("android.app.IActivityTaskManager\$Stub")
+            val asInterface = stubClass.getDeclaredMethod("asInterface", IBinder::class.java)
+            val taskManager = asInterface.invoke(null, wrapper)
+                ?: throw IllegalStateException("IActivityTaskManager proxy not available")
+            val foreground = queryForegroundTask(taskManager) ?: run {
+                AppLog.w(TAG, "Unable to query foreground task")
+                return null
+            }
+            val component = foreground.topActivity ?: return null
+            AppLog.d(
+                TAG,
+                "foreground task=${foreground.taskId} component=${component.className}",
+            )
+            if (component.packageName != WECHAT_PACKAGE ||
+                !component.className.contains(WECHAT_APP_BRAND_ACTIVITY)
+            ) return null
+            WechatMiniProgramForeground(
+                taskId = foreground.taskId,
+                activityClassName = component.className,
+            )
+        } catch (error: Throwable) {
+            AppLog.w(TAG, "Unable to verify foreground WeChat mini-program", error)
+            null
+        }
+    }
+
+    private fun queryForegroundTask(taskManager: Any): ActivityManager.RunningTaskInfo? {
+        taskManager.javaClass.methods
+            .filter { it.name == "getTasks" }
+            .sortedBy { it.parameterCount }
+            .forEach { method ->
+                val arguments = buildGetTasksArguments(method.parameterTypes) ?: return@forEach
+                val result = runCatching { method.invoke(taskManager, *arguments) }.getOrNull()
+                    ?: return@forEach
+                val tasks = when (result) {
+                    is List<*> -> result
+                    else -> runCatching {
+                        result.javaClass.getMethod("getList").invoke(result) as? List<*>
+                    }.getOrNull()
+                }.orEmpty()
+                tasks.firstOrNull { it is ActivityManager.RunningTaskInfo }
+                    ?.let { return it as ActivityManager.RunningTaskInfo }
+            }
+        return null
+    }
+
+    private fun buildGetTasksArguments(parameterTypes: Array<Class<*>>): Array<Any?>? {
+        var integerIndex = 0
+        return Array(parameterTypes.size) { index ->
+            when (parameterTypes[index]) {
+                Int::class.javaPrimitiveType -> if (integerIndex++ == 0) 1 else 0
+                Boolean::class.javaPrimitiveType -> false
+                else -> return null
+            }
         }
     }
 

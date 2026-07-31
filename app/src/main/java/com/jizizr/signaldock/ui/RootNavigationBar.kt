@@ -1,6 +1,5 @@
 package com.jizizr.signaldock.ui
 
-import android.os.Build
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
@@ -35,6 +34,8 @@ internal enum class RootDestination {
     HISTORY,
 }
 
+internal val RootNavigationBarClearance = 96.dp
+
 /** InstallerX-style liquid-glass root navigation. */
 @Composable
 internal fun RootFloatingNavigationBar(
@@ -65,11 +66,7 @@ internal fun RootFloatingNavigationBar(
             onSelected = { index -> onSelected(destinations[index]) },
             backdrop = backdrop,
             tabsCount = destinations.size,
-            mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                FloatingBottomBarMode.LiquidGlass
-            } else {
-                FloatingBottomBarMode.Blur
-            },
+            mode = FloatingBottomBarMode.LiquidGlass,
         ) {
             destinations.forEachIndexed { index, destination ->
                 FloatingBottomBarItem(

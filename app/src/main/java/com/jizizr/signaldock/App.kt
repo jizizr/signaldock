@@ -27,6 +27,8 @@ class App : Application() {
         AiSettingsStore.init(this)
         MiclawSessionStore.init(this)
         SuperIslandSettingsStore.init(this)
+        AutoPageProfileStore.init(this)
+        AutoPageNotificationLockStore.init(this)
         if (
             AiSettingsStore.miclawUseExternalAgent &&
             !MiclawAgentClient.isCompatibilitySupported(this)

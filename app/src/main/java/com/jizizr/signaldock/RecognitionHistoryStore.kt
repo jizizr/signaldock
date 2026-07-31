@@ -36,6 +36,10 @@ data class RecognitionHistoryRecord(
     val hasScreenshot: Boolean,
     val hasQrImage: Boolean,
     val hasSourceIcon: Boolean,
+    val sourceActivityClass: String = "",
+    val miniProgramLabel: String = "",
+    val miniProgramIconHash: String = "",
+    val pageStableKeywords: List<String> = emptyList(),
 )
 
 internal fun recognitionHistorySummary(record: RecognitionHistoryRecord): String {
@@ -70,6 +74,7 @@ object RecognitionHistoryStore {
         screenshot: Bitmap,
         data: RustBridge.NotificationData,
         analysisDurationMs: Long,
+        pageObservation: PageObservationSnapshot? = null,
     ): RecognitionHistoryRecord {
         val createdAtMs = System.currentTimeMillis()
         val id = "$createdAtMs-${UUID.randomUUID()}"
@@ -113,6 +118,10 @@ object RecognitionHistoryStore {
                 hasScreenshot = screenshotSaved,
                 hasQrImage = qrSaved,
                 hasSourceIcon = sourceIconSaved,
+                sourceActivityClass = pageObservation?.activityClassName.orEmpty(),
+                miniProgramLabel = pageObservation?.miniProgramLabel.orEmpty(),
+                miniProgramIconHash = pageObservation?.miniProgramIconHash.orEmpty(),
+                pageStableKeywords = pageObservation?.stableKeywords.orEmpty(),
             )
             File(temporaryDirectory, RECORD_FILE).writeText(record.toJson().toString())
             check(temporaryDirectory.renameTo(finalDirectory)) {
@@ -314,6 +323,10 @@ object RecognitionHistoryStore {
         put("hasScreenshot", hasScreenshot)
         put("hasQrImage", hasQrImage)
         put("hasSourceIcon", hasSourceIcon)
+        put("sourceActivityClass", sourceActivityClass)
+        put("miniProgramLabel", miniProgramLabel)
+        put("miniProgramIconHash", miniProgramIconHash)
+        put("pageStableKeywords", JSONArray(pageStableKeywords))
     }
 
     private fun JSONObject.toHistoryRecord(): RecognitionHistoryRecord {
@@ -344,6 +357,10 @@ object RecognitionHistoryStore {
             hasScreenshot = optBoolean("hasScreenshot"),
             hasQrImage = optBoolean("hasQrImage"),
             hasSourceIcon = optBoolean("hasSourceIcon"),
+            sourceActivityClass = optString("sourceActivityClass"),
+            miniProgramLabel = optString("miniProgramLabel"),
+            miniProgramIconHash = optString("miniProgramIconHash"),
+            pageStableKeywords = optJSONArray("pageStableKeywords").toStringList(),
         )
     }
 

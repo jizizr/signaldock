@@ -38,6 +38,10 @@ import com.jizizr.signaldock.HyperIslandHelper
 import com.jizizr.signaldock.DiagnosticLogStore
 import com.jizizr.signaldock.DiagnosticLogActivity
 import com.jizizr.signaldock.AppUiSettingsStore
+import com.jizizr.signaldock.AppShell
+import com.jizizr.signaldock.AccessibilityScreenshotService
+import com.jizizr.signaldock.AutoPageActivity
+import com.jizizr.signaldock.AutoPageProfileStore
 import com.jizizr.signaldock.R
 import com.jizizr.signaldock.QuickSettingsTileHelper
 import com.jizizr.signaldock.RecognitionHistoryDetailActivity
@@ -76,11 +80,14 @@ fun MainScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     val customModelSavedMessage = stringResource(R.string.custom_model_saved)
+    val autoPageEnableFailedMessage = stringResource(R.string.auto_page_accessibility_failed)
     var showCustomModel by rememberSaveable { mutableStateOf(false) }
     var splashAnimationEnabled by rememberSaveable {
         mutableStateOf(AppUiSettingsStore.splashAnimationEnabled)
     }
     var diagnosticLoggingEnabled by rememberSaveable { mutableStateOf(DiagnosticLogStore.enabled) }
+    var autoPageEnabled by rememberSaveable { mutableStateOf(AutoPageProfileStore.enabled) }
+    var autoPageCount by rememberSaveable { mutableIntStateOf(AutoPageProfileStore.loadAll().count { it.enabled }) }
     var selectedPage by rememberSaveable { mutableIntStateOf(0) }
     val rootBackdrop = rememberLayerBackdrop()
     val pagerState = rememberPagerState(initialPage = selectedPage) {
@@ -91,11 +98,31 @@ fun MainScreen(
     ) {
         diagnosticLoggingEnabled = DiagnosticLogStore.enabled
     }
+    val autoPageLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) {
+        autoPageEnabled = AutoPageProfileStore.enabled
+        autoPageCount = AutoPageProfileStore.loadAll().count { it.enabled }
+    }
 
     LaunchedEffect(pagerState) {
         snapshotFlow { pagerState.currentPage }
             .distinctUntilChanged()
             .collect { selectedPage = it }
+    }
+
+    LaunchedEffect(shizuku.ready, autoPageEnabled) {
+        if (shizuku.ready && autoPageEnabled && AccessibilityScreenshotService.instance == null) {
+            AppShell.enableAccessibility(context) { enabledAccessibility ->
+                if (!enabledAccessibility) {
+                    autoPageEnabled = false
+                    AutoPageProfileStore.enabled = false
+                    scope.launch {
+                        snackbarHostState.showSnackbar(autoPageEnableFailedMessage)
+                    }
+                }
+            }
+        }
     }
 
     PredictiveBackHandler(
@@ -119,7 +146,7 @@ fun MainScreen(
         )
         return
     }
-    Box(modifier = Modifier.fillMaxSize().background(MiuixTheme.colorScheme.background)) {
+    Box(modifier = Modifier.fillMaxSize().background(MiuixTheme.colorScheme.surface)) {
         HorizontalPager(
             state = pagerState,
             modifier = Modifier
@@ -146,6 +173,8 @@ fun MainScreen(
                     supportsIsland = supportsIsland,
                     splashAnimationEnabled = splashAnimationEnabled,
                     diagnosticLoggingEnabled = diagnosticLoggingEnabled,
+                    autoPageEnabled = autoPageEnabled,
+                    autoPageCount = autoPageCount,
                     rootBackdrop = rootBackdrop,
                     scrollBehavior = scrollBehavior,
                     snackbarHostState = snackbarHostState,
@@ -158,6 +187,31 @@ fun MainScreen(
                     },
                     onOpenDiagnostics = {
                         diagnosticLauncher.launch(Intent(context, DiagnosticLogActivity::class.java))
+                    },
+                    onAutoPageEnabledChanged = { enabled ->
+                        if (!enabled) {
+                            autoPageEnabled = false
+                            AutoPageProfileStore.enabled = false
+                        } else if (AccessibilityScreenshotService.instance != null) {
+                            autoPageEnabled = true
+                            AutoPageProfileStore.enabled = true
+                        } else {
+                            AppShell.enableAccessibility(context) { enabledAccessibility ->
+                                if (enabledAccessibility) {
+                                    autoPageEnabled = true
+                                    AutoPageProfileStore.enabled = true
+                                } else {
+                                    autoPageEnabled = false
+                                    AutoPageProfileStore.enabled = false
+                                    scope.launch {
+                                        snackbarHostState.showSnackbar(autoPageEnableFailedMessage)
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    onOpenAutoPages = {
+                        autoPageLauncher.launch(Intent(context, AutoPageActivity::class.java))
                     },
                 )
             }
@@ -185,6 +239,8 @@ private fun SettingsRootScreen(
     supportsIsland: Boolean,
     splashAnimationEnabled: Boolean,
     diagnosticLoggingEnabled: Boolean,
+    autoPageEnabled: Boolean,
+    autoPageCount: Int,
     rootBackdrop: LayerBackdrop,
     scrollBehavior: ScrollBehavior,
     snackbarHostState: SnackbarHostState,
@@ -193,6 +249,8 @@ private fun SettingsRootScreen(
     onOpenCustomModel: () -> Unit,
     onSplashAnimationChanged: (Boolean) -> Unit,
     onOpenDiagnostics: () -> Unit,
+    onAutoPageEnabledChanged: (Boolean) -> Unit,
+    onOpenAutoPages: () -> Unit,
 ) {
     Scaffold(
         topBar = {
@@ -202,13 +260,18 @@ private fun SettingsRootScreen(
                 scrollBehavior = scrollBehavior,
             )
         },
-        snackbarHost = { SnackbarHost(state = snackbarHostState) },
+        snackbarHost = {
+            SnackbarHost(
+                state = snackbarHostState,
+                modifier = Modifier.padding(bottom = RootNavigationBarClearance),
+            )
+        },
     ) { padding ->
         val layoutDirection = LocalLayoutDirection.current
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
-                .background(MiuixTheme.colorScheme.background)
+                .background(MiuixTheme.colorScheme.surface)
                 .imePadding()
                 .scrollEndHaptic()
                 .overScrollVertical()
@@ -217,7 +280,7 @@ private fun SettingsRootScreen(
                 start = padding.calculateStartPadding(layoutDirection),
                 top = padding.calculateTopPadding(),
                 end = padding.calculateEndPadding(layoutDirection),
-                bottom = padding.calculateBottomPadding() + 96.dp,
+                bottom = padding.calculateBottomPadding() + RootNavigationBarClearance,
             ),
         ) {
             item(key = "status") {
@@ -245,6 +308,22 @@ private fun SettingsRootScreen(
                         onCheckedChange = onSplashAnimationChanged,
                         title = stringResource(R.string.splash_animation),
                         summary = stringResource(R.string.splash_animation_summary),
+                    )
+                }
+            }
+            item(key = "auto_page") {
+                SmallTitle(stringResource(R.string.section_auto_page))
+                SectionCard {
+                    SwitchPreference(
+                        checked = autoPageEnabled,
+                        onCheckedChange = onAutoPageEnabledChanged,
+                        title = stringResource(R.string.auto_page_enabled),
+                        summary = stringResource(R.string.auto_page_enabled_summary),
+                    )
+                    ArrowPreference(
+                        title = stringResource(R.string.auto_page_title),
+                        summary = stringResource(R.string.auto_page_count, autoPageCount),
+                        onClick = onOpenAutoPages,
                     )
                 }
             }

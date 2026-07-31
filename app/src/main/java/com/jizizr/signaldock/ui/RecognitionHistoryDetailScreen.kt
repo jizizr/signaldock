@@ -3,7 +3,10 @@ package com.jizizr.signaldock.ui
 import android.graphics.BitmapFactory
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.calculateEndPadding
 import androidx.compose.foundation.layout.calculateStartPadding
@@ -29,6 +32,9 @@ import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.jizizr.signaldock.R
+import com.jizizr.signaldock.AccessibilityScreenshotService
+import com.jizizr.signaldock.AppShell
+import com.jizizr.signaldock.AutoPageProfileStore
 import com.jizizr.signaldock.RecognitionHistoryRecord
 import com.jizizr.signaldock.RecognitionHistoryStore
 import kotlinx.coroutines.Dispatchers
@@ -46,9 +52,11 @@ import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.extended.Back
+import top.yukonga.miuix.kmp.preference.ArrowPreference
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.utils.overScrollVertical
 import top.yukonga.miuix.kmp.utils.scrollEndHaptic
+import top.yukonga.miuix.kmp.window.WindowDialog
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -66,6 +74,11 @@ internal fun RecognitionHistoryDetailScreen(
     var record by remember { mutableStateOf<RecognitionHistoryRecord?>(null) }
     var screenshot by remember { mutableStateOf<ImageBitmap?>(null) }
     var replaying by remember { mutableStateOf(false) }
+    var showAutoPageDialog by remember { mutableStateOf(false) }
+    var autoPageSaved by remember { mutableStateOf(false) }
+    var draftProfileName by remember { mutableStateOf("") }
+    var draftKeywords by remember { mutableStateOf("") }
+    var draftExcludedKeywords by remember { mutableStateOf("") }
 
     LaunchedEffect(recordId) {
         val loaded = withContext(Dispatchers.IO) {
@@ -144,11 +157,40 @@ internal fun RecognitionHistoryDetailScreen(
                     ) {
                         Text(
                             text = stringResource(R.string.history_loading),
-                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                            color = MiuixTheme.colorScheme.onSurface.copy(alpha = 0.72f),
                         )
                     }
                 }
             } else {
+                item(key = "auto_page") {
+                    SmallTitle(stringResource(R.string.section_auto_page))
+                    SectionCard {
+                        ArrowPreference(
+                            title = stringResource(
+                                if (autoPageSaved) R.string.auto_page_added
+                                else R.string.auto_page_add_from_history,
+                            ),
+                            summary = stringResource(R.string.auto_page_add_from_history_summary),
+                            onClick = {
+                                if (current.sourcePackage.isBlank()) {
+                                    scope.launch {
+                                        snackbarHostState.showSnackbar(
+                                            resources.getString(R.string.auto_page_source_unavailable),
+                                        )
+                                    }
+                                    return@ArrowPreference
+                                }
+                                val suggestions = AutoPageProfileStore.suggestedKeywords(current)
+                                draftProfileName = current.merchant
+                                    .ifBlank { current.miniProgramLabel }
+                                    .ifBlank { current.sourcePackage }
+                                draftKeywords = suggestions.joinToString("，")
+                                draftExcludedKeywords = ""
+                                showAutoPageDialog = true
+                            },
+                        )
+                    }
+                }
                 item(key = "screenshot") {
                     SmallTitle(stringResource(R.string.history_screenshot))
                     SectionCard {
@@ -213,6 +255,84 @@ internal fun RecognitionHistoryDetailScreen(
                         )
                     }
                 }
+            }
+        }
+    }
+
+    WindowDialog(
+        title = stringResource(R.string.auto_page_add_from_history),
+        show = showAutoPageDialog,
+        onDismissRequest = { showAutoPageDialog = false },
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            StableTextField(
+                value = draftProfileName,
+                onValueChange = { draftProfileName = it },
+                label = stringResource(R.string.auto_page_name),
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            StableTextField(
+                value = draftKeywords,
+                onValueChange = { draftKeywords = it },
+                label = stringResource(R.string.auto_page_keywords_input),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            StableTextField(
+                value = draftExcludedKeywords,
+                onValueChange = { draftExcludedKeywords = it },
+                label = stringResource(R.string.auto_page_excluded_keywords_input),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Text(
+                text = stringResource(R.string.auto_page_learning_privacy),
+                style = MiuixTheme.textStyles.body2,
+                color = MiuixTheme.colorScheme.onSurface.copy(alpha = 0.72f),
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+            ) {
+                TextButton(
+                    text = stringResource(R.string.cancel),
+                    onClick = { showAutoPageDialog = false },
+                )
+                TextButton(
+                    text = stringResource(R.string.save),
+                    enabled = record != null && draftProfileName.isNotBlank() && draftKeywords.isNotBlank(),
+                    onClick = {
+                        val current = record ?: return@TextButton
+                        val profile = AutoPageProfileStore.createFromHistory(
+                            context = context,
+                            record = current,
+                            name = draftProfileName,
+                            keywords = listOf(draftKeywords),
+                            excludedKeywords = listOf(draftExcludedKeywords),
+                        )
+                        AutoPageProfileStore.save(profile)
+                        AutoPageProfileStore.enabled = true
+                        if (AccessibilityScreenshotService.instance == null) {
+                            AppShell.enableAccessibility(context) { enabled ->
+                                if (!enabled) {
+                                    scope.launch {
+                                        snackbarHostState.showSnackbar(
+                                            resources.getString(
+                                                R.string.auto_page_accessibility_failed,
+                                            ),
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                        autoPageSaved = true
+                        showAutoPageDialog = false
+                        scope.launch {
+                            snackbarHostState.showSnackbar(
+                                resources.getString(R.string.auto_page_saved),
+                            )
+                        }
+                    },
+                )
             }
         }
     }

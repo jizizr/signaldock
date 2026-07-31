@@ -92,6 +92,7 @@ object DiagnosticLogExporter {
         }
         val memoryUsedMb = (runtime.totalMemory() - runtime.freeMemory()) / (1024 * 1024)
         val memoryMaxMb = runtime.maxMemory() / (1024 * 1024)
+        val autoPageProfiles = AutoPageProfileStore.loadAll()
 
         return buildString {
             appendLine("SignalDock diagnostic package")
@@ -114,6 +115,9 @@ object DiagnosticLogExporter {
             appendLine("shizukuMode=$shizukuMode")
             appendLine("accessibilityServiceReady=${AccessibilityScreenshotService.instance != null}")
             appendLine("aiProvider=${AiSettingsStore.selectedPreset.name}")
+            appendLine("autoPageEnabled=${AutoPageProfileStore.enabled}")
+            appendLine("autoPageProfileCount=${autoPageProfiles.size}")
+            appendLine("autoPageEnabledProfileCount=${autoPageProfiles.count { it.enabled }}")
             appendLine("diagnosticLoggingEnabled=${DiagnosticLogStore.enabled}")
             appendLine("droppedLogEntries=${DiagnosticLogStore.droppedCount}")
             appendLine()
