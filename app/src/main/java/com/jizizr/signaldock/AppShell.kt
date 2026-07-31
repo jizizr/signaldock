@@ -41,6 +41,12 @@ object AppShell {
         val activityClassName: String,
     )
 
+    data class ForegroundAppTask(
+        val taskId: Int,
+        val packageName: String,
+        val activityClassName: String,
+    )
+
     private val mainHandler = Handler(Looper.getMainLooper())
     private val privilegedExecutor = newIdleExecutor(
         "SignalDock-Privileged",
@@ -212,9 +218,9 @@ object AppShell {
         }
     }
 
-    /** Returns the actual foreground WeChat mini-program task without reading its icon. */
+    /** Returns the actual foreground app task through ActivityTaskManager. */
     @android.annotation.SuppressLint("BlockedPrivateApi")
-    fun findForegroundWechatMiniProgram(): WechatMiniProgramForeground? {
+    fun findForegroundAppTask(): ForegroundAppTask? {
         if (!isShizukuAvailable) return null
         return try {
             val originalBinder = SystemServiceHelper.getSystemService("activity_task")
@@ -233,18 +239,30 @@ object AppShell {
                 TAG,
                 "foreground task=${foreground.taskId} component=${component.className}",
             )
-            if (component.packageName != WECHAT_PACKAGE ||
-                !component.className.contains(WECHAT_APP_BRAND_ACTIVITY)
-            ) return null
-            WechatMiniProgramForeground(
+            ForegroundAppTask(
                 taskId = foreground.taskId,
+                packageName = component.packageName,
                 activityClassName = component.className,
             )
         } catch (error: Throwable) {
-            AppLog.w(TAG, "Unable to verify foreground WeChat mini-program", error)
+            AppLog.w(TAG, "Unable to query foreground app task", error)
             null
         }
     }
+
+    /** Returns the actual foreground WeChat mini-program task without reading its icon. */
+    fun findForegroundWechatMiniProgram(): WechatMiniProgramForeground? =
+        findForegroundAppTask()
+            ?.takeIf { task ->
+                task.packageName == WECHAT_PACKAGE &&
+                    task.activityClassName.contains(WECHAT_APP_BRAND_ACTIVITY)
+            }
+            ?.let { task ->
+                WechatMiniProgramForeground(
+                    taskId = task.taskId,
+                    activityClassName = task.activityClassName,
+                )
+            }
 
     /** Queries the real foreground task off the main thread to avoid changing UI timing. */
     fun logForegroundTaskSnapshotAsync(stage: String) {

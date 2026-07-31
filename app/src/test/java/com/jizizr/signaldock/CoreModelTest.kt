@@ -564,19 +564,26 @@ class CoreModelTest {
     }
 
     @Test
-    fun sourcePackage_prefersVerifiedMiniProgramTaskOverAccessibilityWindow() {
+    fun sourcePackage_prefersVerifiedForegroundTaskOverAccessibilityWindow() {
         assertEquals(
-            SourceIconResolver.WECHAT_PACKAGE,
+            "com.sankuai.meituan",
             resolveSourcePackageName(
                 accessibilityPackageName = "com.miui.home",
-                hasForegroundWechatMiniProgram = true,
+                foregroundPackageName = "com.sankuai.meituan",
             ),
         )
         assertEquals(
             "com.miui.home",
             resolveSourcePackageName(
                 accessibilityPackageName = "com.miui.home",
-                hasForegroundWechatMiniProgram = false,
+                foregroundPackageName = null,
+            ),
+        )
+        assertEquals(
+            SourceIconResolver.WECHAT_PACKAGE,
+            resolveSourcePackageName(
+                accessibilityPackageName = "com.miui.home",
+                foregroundPackageName = SourceIconResolver.WECHAT_PACKAGE,
             ),
         )
     }

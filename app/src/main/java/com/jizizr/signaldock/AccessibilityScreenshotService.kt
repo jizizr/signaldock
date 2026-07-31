@@ -371,7 +371,7 @@ class AccessibilityScreenshotService : AccessibilityService() {
             is CaptureTrigger.Manual -> SourceIconResolver.inspect(
                 service = this,
                 activityClassName = lastActivityClassName,
-                verifyForegroundMiniProgram = true,
+                verifyForegroundTask = true,
             )
             is CaptureTrigger.Auto -> trigger.inspection
         }
