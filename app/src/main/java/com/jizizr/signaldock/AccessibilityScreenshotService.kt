@@ -206,9 +206,23 @@ class AccessibilityScreenshotService : AccessibilityService() {
 
     fun scheduleScreenshot(tileTapStartedAtMs: Long) {
         var waitedMs = PANEL_MIN_CLOSE_DELAY_MS
+        var nextDiagnosticAtMs = 0L
         val captureWhenReady = object : Runnable {
             override fun run() {
-                if (isCaptureTargetReady() || waitedMs >= PANEL_MAX_CLOSE_DELAY_MS) {
+                val ready = isCaptureTargetReady()
+                val now = SystemClock.uptimeMillis()
+                if (SourceWindowDiagnostics.enabled &&
+                    (now >= nextDiagnosticAtMs || ready || waitedMs >= PANEL_MAX_CLOSE_DELAY_MS)
+                ) {
+                    val stage = "capture-wait-${waitedMs}ms-ready=$ready"
+                    SourceWindowDiagnostics.logWindows(this@AccessibilityScreenshotService, stage)
+                    AppShell.logForegroundTaskSnapshotAsync(stage)
+                    nextDiagnosticAtMs = now + 250L
+                }
+                if (ready || waitedMs >= PANEL_MAX_CLOSE_DELAY_MS) {
+                    SourceWindowDiagnostics.log(
+                        "stage=capture-trigger waitedMs=$waitedMs ready=$ready",
+                    )
                     triggerScreenshot(tileTapStartedAtMs)
                     return
                 }

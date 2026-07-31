@@ -246,6 +246,48 @@ object AppShell {
         }
     }
 
+    /** Queries the real foreground task off the main thread to avoid changing UI timing. */
+    fun logForegroundTaskSnapshotAsync(stage: String) {
+        if (!SourceWindowDiagnostics.enabled) return
+        privilegedExecutor.execute { logForegroundTaskSnapshot(stage) }
+    }
+
+    /** Logs the real ActivityTaskManager foreground task without page content. */
+    @android.annotation.SuppressLint("BlockedPrivateApi")
+    private fun logForegroundTaskSnapshot(stage: String) {
+        if (!SourceWindowDiagnostics.enabled) return
+        if (!isShizukuAvailable) {
+            SourceWindowDiagnostics.log("stage=$stage taskQuery=shizuku-unavailable")
+            return
+        }
+        runCatching {
+            val originalBinder = SystemServiceHelper.getSystemService("activity_task")
+                ?: error("ActivityTaskManager binder not available")
+            val wrapper = ShizukuBinderWrapper(originalBinder)
+            val stubClass = Class.forName("android.app.IActivityTaskManager\$Stub")
+            val asInterface = stubClass.getDeclaredMethod("asInterface", IBinder::class.java)
+            val taskManager = asInterface.invoke(null, wrapper)
+                ?: error("IActivityTaskManager proxy not available")
+            val foreground = queryForegroundTask(taskManager)
+            SourceWindowDiagnostics.log(
+                if (foreground == null) {
+                    "stage=$stage taskQuery=empty"
+                } else {
+                    "stage=$stage taskId=${foreground.taskId} " +
+                        "top=${foreground.topActivity?.flattenToShortString()} " +
+                        "base=${foreground.baseActivity?.flattenToShortString()} " +
+                        "intent=${foreground.baseIntent.component?.flattenToShortString()} " +
+                        "activities=${foreground.numActivities}"
+                },
+            )
+        }.onFailure { error ->
+            SourceWindowDiagnostics.log(
+                "stage=$stage taskQuery=failed error=${error.javaClass.simpleName}:" +
+                    error.message.orEmpty().take(160),
+            )
+        }
+    }
+
     private fun queryForegroundTask(taskManager: Any): ActivityManager.RunningTaskInfo? {
         taskManager.javaClass.methods
             .filter { it.name == "getTasks" }

@@ -100,6 +100,7 @@ object DiagnosticLogExporter {
             appendLine("package=${context.packageName}")
             appendLine("versionName=${packageInfo.versionName.orEmpty()}")
             appendLine("versionCode=${packageInfo.longVersionCode}")
+            appendLine("sourceWindowDiagnostics=${BuildConfig.SOURCE_WINDOW_DIAGNOSTICS}")
             appendLine("processId=${Process.myPid()}")
             appendLine("processUptimeMs=${SystemClock.elapsedRealtime()}")
             appendLine("memoryUsedMb=$memoryUsedMb")

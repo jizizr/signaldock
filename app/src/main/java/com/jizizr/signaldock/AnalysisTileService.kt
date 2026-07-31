@@ -64,10 +64,12 @@ class AnalysisTileService : TileService() {
         super.onClick()
         pendingTapStartedAtMs = SystemClock.elapsedRealtime()
         AppLog.i(TAG, "Tile clicked")
+        logSourceContext("tile-click")
         setTileLabel("正在启动…")
         val actionHandled = AtomicBoolean(false)
         val action = Runnable {
             if (!actionHandled.compareAndSet(false, true)) return@Runnable
+            logSourceContext("unlock-callback")
             runCatching(::handleTileClick)
                 .onFailure { error ->
                     AppLog.e(TAG, "Tile action failed", error)
@@ -88,6 +90,17 @@ class AnalysisTileService : TileService() {
                 openMainApp(R.string.tile_action_failed)
             }
         }
+    }
+
+    private fun logSourceContext(stage: String) {
+        if (!SourceWindowDiagnostics.enabled) return
+        SourceWindowDiagnostics.log(
+            "stage=$stage tileElapsed=${SystemClock.elapsedRealtime() - pendingTapStartedAtMs}",
+        )
+        AccessibilityScreenshotService.instance?.let { service ->
+            SourceWindowDiagnostics.logWindows(service, stage)
+        } ?: SourceWindowDiagnostics.log("stage=$stage accessibilityService=null")
+        AppShell.logForegroundTaskSnapshotAsync(stage)
     }
 
     private fun handleTileClick() {

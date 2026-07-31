@@ -128,15 +128,28 @@ object SourceIconResolver {
         activityClassName: String = "",
         verifyForegroundMiniProgram: Boolean = false,
     ): SourceAppInspection {
+        SourceWindowDiagnostics.log(
+            "stage=source-inspect-start verifyForegroundMiniProgram=$verifyForegroundMiniProgram " +
+                "activityHint=$activityClassName",
+        )
+        SourceWindowDiagnostics.logWindows(service, "source-inspect-start")
+        AppShell.logForegroundTaskSnapshotAsync("source-inspect-start")
         val activeRoot = service.rootInActiveWindow
+        var rootSelection = "active-root"
         val initialRoot = activeRoot.takeIf(::isUsableRoot)
-            ?: service.windows.asSequence()
-                .filter { it.isFocused || it.isActive }
-                .mapNotNull { it.root }
-                .firstOrNull(::isUsableRoot)
-            ?: service.windows.asSequence()
-                .mapNotNull { it.root }
-                .firstOrNull(::isUsableRoot)
+            ?: run {
+                rootSelection = "focused-or-active-window"
+                service.windows.asSequence()
+                    .filter { it.isFocused || it.isActive }
+                    .mapNotNull { it.root }
+                    .firstOrNull(::isUsableRoot)
+            }
+            ?: run {
+                rootSelection = "first-usable-window"
+                service.windows.asSequence()
+                    .mapNotNull { it.root }
+                    .firstOrNull(::isUsableRoot)
+            }
         val accessibilityPackageName = initialRoot?.packageName?.toString()
         val foregroundMiniProgram = if (
             verifyForegroundMiniProgram || accessibilityPackageName == WECHAT_PACKAGE
@@ -181,7 +194,8 @@ object SourceIconResolver {
         miniProgramTask?.icon?.takeUnless(Bitmap::isRecycled)?.recycle()
         AppLog.d(
             TAG,
-            "source package=$packageName accessibilityPackage=$accessibilityPackageName " +
+            "source selection=$rootSelection package=$packageName " +
+                "accessibilityPackage=$accessibilityPackageName " +
                 "nodePackage=$nodePackageName " +
                 "foregroundMiniProgramTask=${foregroundMiniProgram?.taskId ?: -1} " +
                 "miniProgramNode=${nodeSnapshot.miniProgramIconBounds != null}",

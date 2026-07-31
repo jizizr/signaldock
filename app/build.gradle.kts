@@ -23,6 +23,9 @@ val releaseSigningProperties = Properties().apply {
 val hasReleaseSigningConfig = releaseSigningPropertiesFile.isFile &&
     listOf("storeFile", "storePassword", "keyAlias", "keyPassword")
         .all { !releaseSigningProperties.getProperty(it).isNullOrBlank() }
+val sourceWindowDiagnostics = providers.gradleProperty("sourceWindowDiagnostics")
+    .map(String::toBoolean)
+    .orElse(false)
 val defaultSdkDir = when {
     System.getProperty("os.name").startsWith("Mac", ignoreCase = true) ->
         "${System.getProperty("user.home")}/Library/Android/sdk"
@@ -125,6 +128,12 @@ android {
         versionCode = 6
         versionName = "1.2.0"
 
+        buildConfigField(
+            "boolean",
+            "SOURCE_WINDOW_DIAGNOSTICS",
+            sourceWindowDiagnostics.get().toString(),
+        )
+
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         // Only build ABIs we have Rust targets for
@@ -172,6 +181,7 @@ android {
     buildFeatures {
         compose = true
         aidl = true
+        buildConfig = true
     }
     packaging {
         resources {

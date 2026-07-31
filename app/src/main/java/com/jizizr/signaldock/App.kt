@@ -19,7 +19,11 @@ class App : Application() {
         super.onCreate()
         DiagnosticLogStore.init(this)
         DiagnosticCrashHandler.init()
-        AppLog.i("App", "Application process started")
+        AppLog.i(
+            "App",
+            "Application process started sourceWindowDiagnostics=" +
+                BuildConfig.SOURCE_WINDOW_DIAGNOSTICS,
+        )
         // minSdk=36 >= P(28), always apply bypass
         HiddenApiBypass.addHiddenApiExemptions("")
         // 初始化 AI 参数持久化存储
