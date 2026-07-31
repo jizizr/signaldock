@@ -126,9 +126,10 @@ object SourceIconResolver {
     fun inspect(
         service: AccessibilityService,
         activityClassName: String = "",
+        verifyForegroundMiniProgram: Boolean = false,
     ): SourceAppInspection {
         val activeRoot = service.rootInActiveWindow
-        val root = activeRoot.takeIf(::isUsableRoot)
+        val initialRoot = activeRoot.takeIf(::isUsableRoot)
             ?: service.windows.asSequence()
                 .filter { it.isFocused || it.isActive }
                 .mapNotNull { it.root }
@@ -136,12 +137,29 @@ object SourceIconResolver {
             ?: service.windows.asSequence()
                 .mapNotNull { it.root }
                 .firstOrNull(::isUsableRoot)
-        val packageName = root?.packageName?.toString()
-        val foregroundMiniProgram = if (packageName == WECHAT_PACKAGE) {
+        val accessibilityPackageName = initialRoot?.packageName?.toString()
+        val foregroundMiniProgram = if (
+            verifyForegroundMiniProgram || accessibilityPackageName == WECHAT_PACKAGE
+        ) {
             AppShell.findForegroundWechatMiniProgram()
         } else {
             null
         }
+        val root = if (
+            foregroundMiniProgram != null && accessibilityPackageName != WECHAT_PACKAGE
+        ) {
+            service.windows.asSequence()
+                .mapNotNull { it.root }
+                .firstOrNull { it.packageName?.toString() == WECHAT_PACKAGE }
+                ?: initialRoot
+        } else {
+            initialRoot
+        }
+        val nodePackageName = root?.packageName?.toString()
+        val packageName = resolveSourcePackageName(
+            accessibilityPackageName = accessibilityPackageName,
+            hasForegroundWechatMiniProgram = foregroundMiniProgram != null,
+        )
         val resolvedActivityClassName = foregroundMiniProgram?.activityClassName ?: activityClassName
             .takeIf { candidate ->
                 candidate.isNotBlank() &&
@@ -150,7 +168,8 @@ object SourceIconResolver {
             ?: root?.className?.toString().orEmpty()
         val nodeSnapshot = collectPageNodeSnapshot(
             root = root,
-            includeMiniProgramIcon = foregroundMiniProgram != null,
+            includeMiniProgramIcon = foregroundMiniProgram != null &&
+                nodePackageName == WECHAT_PACKAGE,
         )
         val miniProgramTask = if (foregroundMiniProgram != null) {
             AppShell.findWechatMiniProgramTask(foregroundMiniProgram.taskId)
@@ -162,8 +181,10 @@ object SourceIconResolver {
         miniProgramTask?.icon?.takeUnless(Bitmap::isRecycled)?.recycle()
         AppLog.d(
             TAG,
-            "foreground package=$packageName miniProgramNode=" +
-                "${nodeSnapshot.miniProgramIconBounds != null}",
+            "source package=$packageName accessibilityPackage=$accessibilityPackageName " +
+                "nodePackage=$nodePackageName " +
+                "foregroundMiniProgramTask=${foregroundMiniProgram?.taskId ?: -1} " +
+                "miniProgramNode=${nodeSnapshot.miniProgramIconBounds != null}",
         )
         return SourceAppInspection(
             packageName = packageName,
@@ -234,6 +255,15 @@ object SourceIconResolver {
             }
     }
 
+}
+
+internal fun resolveSourcePackageName(
+    accessibilityPackageName: String?,
+    hasForegroundWechatMiniProgram: Boolean,
+): String? = if (hasForegroundWechatMiniProgram) {
+    SourceIconResolver.WECHAT_PACKAGE
+} else {
+    accessibilityPackageName
 }
 
 private val WECHAT_MINI_PROGRAM_ACTIVITY_REGEX =

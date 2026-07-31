@@ -354,7 +354,11 @@ class AccessibilityScreenshotService : AccessibilityService() {
                 "elapsed=${SystemClock.elapsedRealtime() - trigger.startedAtMs}ms",
         )
         val sourceInspection = when (trigger) {
-            is CaptureTrigger.Manual -> SourceIconResolver.inspect(this, lastActivityClassName)
+            is CaptureTrigger.Manual -> SourceIconResolver.inspect(
+                service = this,
+                activityClassName = lastActivityClassName,
+                verifyForegroundMiniProgram = true,
+            )
             is CaptureTrigger.Auto -> trigger.inspection
         }
         if (trigger is CaptureTrigger.Manual) {

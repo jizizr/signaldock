@@ -563,4 +563,22 @@ class CoreModelTest {
         assertFalse(AutoPageMatcher.rank(orderList, listOf(profile)).single().textMatched)
     }
 
+    @Test
+    fun sourcePackage_prefersVerifiedMiniProgramTaskOverAccessibilityWindow() {
+        assertEquals(
+            SourceIconResolver.WECHAT_PACKAGE,
+            resolveSourcePackageName(
+                accessibilityPackageName = "com.miui.home",
+                hasForegroundWechatMiniProgram = true,
+            ),
+        )
+        assertEquals(
+            "com.miui.home",
+            resolveSourcePackageName(
+                accessibilityPackageName = "com.miui.home",
+                hasForegroundWechatMiniProgram = false,
+            ),
+        )
+    }
+
 }
