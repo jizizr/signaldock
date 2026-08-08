@@ -310,8 +310,9 @@ internal fun RecognitionHistoryDetailScreen(
                             excludedKeywords = listOf(draftExcludedKeywords),
                         )
                         AutoPageProfileStore.save(profile)
-                        AutoPageProfileStore.enabled = true
-                        if (AccessibilityScreenshotService.instance == null) {
+                        if (AutoPageProfileStore.enabled &&
+                            AccessibilityScreenshotService.instance == null
+                        ) {
                             AppShell.enableAccessibility(context) { enabled ->
                                 if (!enabled) {
                                     scope.launch {
@@ -328,7 +329,13 @@ internal fun RecognitionHistoryDetailScreen(
                         showAutoPageDialog = false
                         scope.launch {
                             snackbarHostState.showSnackbar(
-                                resources.getString(R.string.auto_page_saved),
+                                resources.getString(
+                                    if (AutoPageProfileStore.enabled) {
+                                        R.string.auto_page_saved
+                                    } else {
+                                        R.string.auto_page_saved_enable_in_settings
+                                    },
+                                ),
                             )
                         }
                     },

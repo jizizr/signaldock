@@ -53,13 +53,15 @@ object AutoPageProfileStore {
     private const val KEY_ENABLED = "enabled"
     private const val KEY_PROFILES = "profiles"
     private lateinit var preferences: SharedPreferences
+    private lateinit var applicationContext: Context
     @Volatile
     private var enabledCache = false
     @Volatile
     private var profilesCache: List<AutoPageProfile> = emptyList()
 
     fun init(context: Context) {
-        preferences = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        applicationContext = context.applicationContext
+        preferences = applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         enabledCache = preferences.getBoolean(KEY_ENABLED, false)
         profilesCache = readProfiles()
     }
@@ -87,6 +89,8 @@ object AutoPageProfileStore {
 
     fun enabledProfiles(): List<AutoPageProfile> =
         if (!enabled) emptyList() else loadAll().filter(AutoPageProfile::enabled)
+
+    fun hasEnabledProfiles(): Boolean = enabledProfiles().isNotEmpty()
 
     @Synchronized
     fun save(profile: AutoPageProfile) {
@@ -417,6 +421,8 @@ internal fun collectPageNodeSnapshot(
     includeMiniProgramIcon: Boolean = false,
 ): PageNodeSnapshot {
     if (root == null) return PageNodeSnapshot(emptyList())
+    val rootBounds = Rect().also(root::getBoundsInScreen)
+        .takeIf { it.width() > 0 && it.height() > 0 }
     val queue = ArrayDeque<AccessibilityNodeInfo>().apply { add(root) }
     val keywords = linkedSetOf<String>()
     var bestIcon: Pair<Int, Rect>? = null
@@ -424,18 +430,24 @@ internal fun collectPageNodeSnapshot(
     while (queue.isNotEmpty() && visited < 2000) {
         val node = queue.removeFirst()
         visited++
-        sequenceOf(node.text, node.contentDescription, node.hintText)
-            .mapNotNull { it?.toString() }
-            .flatMap { it.split('\n').asSequence() }
-            .map(::normalizePageText)
-            .filter(String::isNotBlank)
-            .forEach { text ->
-                if (!isDynamicNormalizedPageText(text) && text.length in 2..48) {
-                    keywords += text
+        val bounds = Rect().also(node::getBoundsInScreen)
+        val isVisibleNode = runCatching { node.isVisibleToUser }.getOrDefault(false) &&
+            bounds.width() > 0 &&
+            bounds.height() > 0 &&
+            (rootBounds == null || Rect.intersects(rootBounds, bounds))
+        if (isVisibleNode) {
+            sequenceOf(node.text, node.contentDescription, node.hintText)
+                .mapNotNull { it?.toString() }
+                .flatMap { it.split('\n').asSequence() }
+                .map(::normalizePageText)
+                .filter(String::isNotBlank)
+                .forEach { text ->
+                    if (!isDynamicNormalizedPageText(text) && text.length in 2..48) {
+                        keywords += text
+                    }
                 }
-            }
-        if (includeMiniProgramIcon) {
-            val bounds = Rect().also(node::getBoundsInScreen)
+        }
+        if (includeMiniProgramIcon && isVisibleNode) {
             val width = bounds.width()
             val height = bounds.height()
             if (width in 36..320 && height in 36..320) {

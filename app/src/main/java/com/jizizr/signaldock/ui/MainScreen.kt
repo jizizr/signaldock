@@ -5,9 +5,13 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.PredictiveBackHandler
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.calculateEndPadding
 import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.foundation.layout.fillMaxSize
@@ -41,13 +45,16 @@ import com.jizizr.signaldock.AppUiSettingsStore
 import com.jizizr.signaldock.AppShell
 import com.jizizr.signaldock.AccessibilityScreenshotService
 import com.jizizr.signaldock.AutoPageActivity
+import com.jizizr.signaldock.AutoPageBackgroundPolicy
 import com.jizizr.signaldock.AutoPageProfileStore
 import com.jizizr.signaldock.R
 import com.jizizr.signaldock.QuickSettingsTileHelper
 import com.jizizr.signaldock.RecognitionHistoryDetailActivity
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.distinctUntilChanged
+import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.MiuixScrollBehavior
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
@@ -56,6 +63,8 @@ import top.yukonga.miuix.kmp.basic.SmallTitle
 import top.yukonga.miuix.kmp.basic.SnackbarHost
 import top.yukonga.miuix.kmp.basic.SnackbarHostState
 import top.yukonga.miuix.kmp.basic.TopAppBar
+import top.yukonga.miuix.kmp.basic.Text
+import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.blur.layerBackdrop
 import top.yukonga.miuix.kmp.blur.rememberLayerBackdrop
 import top.yukonga.miuix.kmp.blur.LayerBackdrop
@@ -64,6 +73,7 @@ import top.yukonga.miuix.kmp.preference.ArrowPreference
 import top.yukonga.miuix.kmp.preference.SwitchPreference
 import top.yukonga.miuix.kmp.utils.overScrollVertical
 import top.yukonga.miuix.kmp.utils.scrollEndHaptic
+import top.yukonga.miuix.kmp.window.WindowDialog
 
 /** Main status and configuration surface for the screenshot analysis pipeline. */
 @Composable
@@ -81,6 +91,7 @@ fun MainScreen(
     val scope = rememberCoroutineScope()
     val customModelSavedMessage = stringResource(R.string.custom_model_saved)
     val autoPageEnableFailedMessage = stringResource(R.string.auto_page_accessibility_failed)
+    val autoPageRepairSuccessMessage = stringResource(R.string.auto_page_accessibility_repair_success)
     var showCustomModel by rememberSaveable { mutableStateOf(false) }
     var splashAnimationEnabled by rememberSaveable {
         mutableStateOf(AppUiSettingsStore.splashAnimationEnabled)
@@ -88,6 +99,16 @@ fun MainScreen(
     var diagnosticLoggingEnabled by rememberSaveable { mutableStateOf(DiagnosticLogStore.enabled) }
     var autoPageEnabled by rememberSaveable { mutableStateOf(AutoPageProfileStore.enabled) }
     var autoPageCount by rememberSaveable { mutableIntStateOf(AutoPageProfileStore.loadAll().count { it.enabled }) }
+    var showAutoPageBackgroundDialog by rememberSaveable { mutableStateOf(false) }
+    var batteryUnrestricted by remember {
+        mutableStateOf(AutoPageBackgroundPolicy.isBatteryUnrestricted(context))
+    }
+    var autoStartState by remember {
+        mutableStateOf(AutoPageBackgroundPolicy.autoStartState(context))
+    }
+    var accessibilityConnected by remember {
+        mutableStateOf(AccessibilityScreenshotService.instance != null)
+    }
     var selectedPage by rememberSaveable { mutableIntStateOf(0) }
     val rootBackdrop = rememberLayerBackdrop()
     val pagerState = rememberPagerState(initialPage = selectedPage) {
@@ -103,6 +124,19 @@ fun MainScreen(
     ) {
         autoPageEnabled = AutoPageProfileStore.enabled
         autoPageCount = AutoPageProfileStore.loadAll().count { it.enabled }
+        accessibilityConnected = AccessibilityScreenshotService.instance != null
+    }
+    val autoStartSettingsLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) {
+        autoStartState = AutoPageBackgroundPolicy.autoStartState(context)
+        accessibilityConnected = AccessibilityScreenshotService.instance != null
+    }
+    val batterySettingsLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) {
+        batteryUnrestricted = AutoPageBackgroundPolicy.isBatteryUnrestricted(context)
+        AccessibilityScreenshotService.instance?.refreshAutoConfiguration()
     }
 
     LaunchedEffect(pagerState) {
@@ -112,6 +146,7 @@ fun MainScreen(
     }
 
     LaunchedEffect(shizuku.ready, autoPageEnabled) {
+        accessibilityConnected = AccessibilityScreenshotService.instance != null
         if (shizuku.ready && autoPageEnabled && AccessibilityScreenshotService.instance == null) {
             AppShell.enableAccessibility(context) { enabledAccessibility ->
                 if (!enabledAccessibility) {
@@ -120,6 +155,43 @@ fun MainScreen(
                     scope.launch {
                         snackbarHostState.showSnackbar(autoPageEnableFailedMessage)
                     }
+                } else {
+                    scope.launch {
+                        delay(600)
+                        accessibilityConnected = AccessibilityScreenshotService.instance != null
+                    }
+                }
+            }
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        if (autoPageEnabled &&
+            (!batteryUnrestricted || !notificationGranted)
+        ) {
+            autoPageEnabled = false
+            AutoPageProfileStore.enabled = false
+            showAutoPageBackgroundDialog = true
+        }
+    }
+
+    val refreshAccessibilityStatus: () -> Unit = {
+        scope.launch {
+            delay(600)
+            accessibilityConnected = AccessibilityScreenshotService.instance != null
+        }
+    }
+    val repairAccessibility: () -> Unit = {
+        if (!shizuku.ready) {
+            scope.launch { snackbarHostState.showSnackbar(autoPageEnableFailedMessage) }
+        } else {
+            AppShell.repairAccessibility(context) { repaired ->
+                if (repaired) refreshAccessibilityStatus()
+                scope.launch {
+                    snackbarHostState.showSnackbar(
+                        if (repaired) autoPageRepairSuccessMessage
+                        else autoPageEnableFailedMessage,
+                    )
                 }
             }
         }
@@ -175,6 +247,10 @@ fun MainScreen(
                     diagnosticLoggingEnabled = diagnosticLoggingEnabled,
                     autoPageEnabled = autoPageEnabled,
                     autoPageCount = autoPageCount,
+                    autoPageBackgroundReady = batteryUnrestricted &&
+                        notificationGranted &&
+                        autoStartState == AutoPageBackgroundPolicy.AutoStartState.ENABLED,
+                    accessibilityConnected = accessibilityConnected,
                     rootBackdrop = rootBackdrop,
                     scrollBehavior = scrollBehavior,
                     snackbarHostState = snackbarHostState,
@@ -192,23 +268,21 @@ fun MainScreen(
                         if (!enabled) {
                             autoPageEnabled = false
                             AutoPageProfileStore.enabled = false
-                        } else if (AccessibilityScreenshotService.instance != null) {
-                            autoPageEnabled = true
-                            AutoPageProfileStore.enabled = true
                         } else {
-                            AppShell.enableAccessibility(context) { enabledAccessibility ->
-                                if (enabledAccessibility) {
-                                    autoPageEnabled = true
-                                    AutoPageProfileStore.enabled = true
-                                } else {
-                                    autoPageEnabled = false
-                                    AutoPageProfileStore.enabled = false
-                                    scope.launch {
-                                        snackbarHostState.showSnackbar(autoPageEnableFailedMessage)
-                                    }
-                                }
-                            }
+                            batteryUnrestricted =
+                                AutoPageBackgroundPolicy.isBatteryUnrestricted(context)
+                            showAutoPageBackgroundDialog = true
                         }
+                    },
+                    onRepairAccessibility = {
+                        repairAccessibility()
+                    },
+                    onOpenAutoPageBackground = {
+                        batteryUnrestricted =
+                            AutoPageBackgroundPolicy.isBatteryUnrestricted(context)
+                        autoStartState = AutoPageBackgroundPolicy.autoStartState(context)
+                        accessibilityConnected = AccessibilityScreenshotService.instance != null
+                        showAutoPageBackgroundDialog = true
                     },
                     onOpenAutoPages = {
                         autoPageLauncher.launch(Intent(context, AutoPageActivity::class.java))
@@ -227,6 +301,55 @@ fun MainScreen(
             },
         )
     }
+
+    AutoPageBackgroundDialog(
+        show = showAutoPageBackgroundDialog,
+        batteryUnrestricted = batteryUnrestricted,
+        autoStartState = autoStartState,
+        accessibilityConnected = accessibilityConnected,
+        notificationGranted = notificationGranted,
+        onDismiss = { showAutoPageBackgroundDialog = false },
+        onOpenAutoStart = {
+            runCatching {
+                autoStartSettingsLauncher.launch(
+                    AutoPageBackgroundPolicy.autoStartSettingsIntent(context),
+                )
+            }
+        },
+        onOpenBattery = {
+            batterySettingsLauncher.launch(
+                AutoPageBackgroundPolicy.batterySettingsIntent(context),
+            )
+        },
+        onRepairAccessibility = {
+            repairAccessibility()
+        },
+        onRequestNotification = onRequestNotification,
+        onEnable = {
+            val enableAfterAccessibility = {
+                autoPageEnabled = true
+                AutoPageProfileStore.enabled = true
+                accessibilityConnected = AccessibilityScreenshotService.instance != null
+                showAutoPageBackgroundDialog = false
+            }
+            if (AccessibilityScreenshotService.instance != null) {
+                enableAfterAccessibility()
+            } else {
+                AppShell.enableAccessibility(context) { enabledAccessibility ->
+                    if (enabledAccessibility) {
+                        enableAfterAccessibility()
+                        refreshAccessibilityStatus()
+                    } else {
+                        autoPageEnabled = false
+                        AutoPageProfileStore.enabled = false
+                        scope.launch {
+                            snackbarHostState.showSnackbar(autoPageEnableFailedMessage)
+                        }
+                    }
+                }
+            }
+        },
+    )
 }
 
 @Composable
@@ -241,6 +364,8 @@ private fun SettingsRootScreen(
     diagnosticLoggingEnabled: Boolean,
     autoPageEnabled: Boolean,
     autoPageCount: Int,
+    autoPageBackgroundReady: Boolean,
+    accessibilityConnected: Boolean,
     rootBackdrop: LayerBackdrop,
     scrollBehavior: ScrollBehavior,
     snackbarHostState: SnackbarHostState,
@@ -250,6 +375,8 @@ private fun SettingsRootScreen(
     onSplashAnimationChanged: (Boolean) -> Unit,
     onOpenDiagnostics: () -> Unit,
     onAutoPageEnabledChanged: (Boolean) -> Unit,
+    onRepairAccessibility: () -> Unit,
+    onOpenAutoPageBackground: () -> Unit,
     onOpenAutoPages: () -> Unit,
 ) {
     Scaffold(
@@ -325,6 +452,40 @@ private fun SettingsRootScreen(
                         summary = stringResource(R.string.auto_page_count, autoPageCount),
                         onClick = onOpenAutoPages,
                     )
+                    BasicComponent(
+                        modifier = Modifier.clickable(onClick = onOpenAutoPageBackground),
+                        title = stringResource(R.string.auto_page_background_title),
+                        summary = stringResource(R.string.auto_page_background_summary),
+                        endActions = {
+                            PreferenceStatus(
+                                text = stringResource(
+                                    if (autoPageBackgroundReady) {
+                                        R.string.auto_page_background_ready
+                                    } else {
+                                        R.string.auto_page_background_required
+                                    },
+                                ),
+                                ready = autoPageBackgroundReady,
+                            )
+                        },
+                    )
+                    BasicComponent(
+                        modifier = Modifier.clickable(onClick = onRepairAccessibility),
+                        title = stringResource(R.string.auto_page_accessibility_repair),
+                        summary = stringResource(R.string.auto_page_accessibility_repair_summary),
+                        endActions = {
+                            PreferenceStatus(
+                                text = stringResource(
+                                    if (accessibilityConnected) {
+                                        R.string.auto_page_accessibility_connected
+                                    } else {
+                                        R.string.auto_page_accessibility_disconnected
+                                    },
+                                ),
+                                ready = accessibilityConnected,
+                            )
+                        },
+                    )
                 }
             }
             item(key = "ai") {
@@ -371,6 +532,116 @@ private fun SettingsRootScreen(
             }
         }
     }
+}
+
+@Composable
+private fun AutoPageBackgroundDialog(
+    show: Boolean,
+    batteryUnrestricted: Boolean,
+    autoStartState: AutoPageBackgroundPolicy.AutoStartState,
+    accessibilityConnected: Boolean,
+    notificationGranted: Boolean,
+    onDismiss: () -> Unit,
+    onOpenAutoStart: () -> Unit,
+    onOpenBattery: () -> Unit,
+    onRepairAccessibility: () -> Unit,
+    onRequestNotification: () -> Unit,
+    onEnable: () -> Unit,
+) {
+    WindowDialog(
+        title = stringResource(R.string.auto_page_background_dialog_title),
+        show = show,
+        onDismissRequest = onDismiss,
+    ) {
+        Column {
+            BasicComponent(
+                modifier = Modifier.clickable(onClick = onOpenAutoStart),
+                title = stringResource(R.string.auto_page_autostart),
+                summary = stringResource(R.string.auto_page_autostart_summary),
+                endActions = {
+                    val enabled = autoStartState ==
+                        AutoPageBackgroundPolicy.AutoStartState.ENABLED
+                    PreferenceStatus(
+                        text = stringResource(
+                            when (autoStartState) {
+                                AutoPageBackgroundPolicy.AutoStartState.ENABLED ->
+                                    R.string.auto_page_status_enabled
+                                AutoPageBackgroundPolicy.AutoStartState.DISABLED ->
+                                    R.string.auto_page_status_disabled
+                                AutoPageBackgroundPolicy.AutoStartState.UNKNOWN ->
+                                    R.string.auto_page_status_unknown
+                            },
+                        ),
+                        ready = enabled,
+                    )
+                },
+            )
+            BasicComponent(
+                modifier = Modifier.clickable(onClick = onOpenBattery),
+                title = stringResource(R.string.auto_page_battery),
+                summary = stringResource(R.string.auto_page_battery_summary),
+                endActions = {
+                    PreferenceStatus(
+                        text = stringResource(
+                            if (batteryUnrestricted) R.string.auto_page_battery_unrestricted
+                            else R.string.auto_page_battery_restricted,
+                        ),
+                        ready = batteryUnrestricted,
+                    )
+                },
+            )
+            BasicComponent(
+                modifier = Modifier.clickable(onClick = onRepairAccessibility),
+                title = stringResource(R.string.auto_page_accessibility_status),
+                summary = stringResource(R.string.auto_page_accessibility_repair_summary),
+                endActions = {
+                    PreferenceStatus(
+                        text = stringResource(
+                            if (accessibilityConnected) {
+                                R.string.auto_page_accessibility_connected
+                            } else {
+                                R.string.auto_page_accessibility_disconnected
+                            },
+                        ),
+                        ready = accessibilityConnected,
+                    )
+                },
+            )
+            if (!notificationGranted) {
+                ArrowPreference(
+                    title = stringResource(R.string.notification_permission),
+                    summary = stringResource(R.string.auto_page_notification_required),
+                    onClick = onRequestNotification,
+                )
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+            ) {
+                TextButton(
+                    text = stringResource(R.string.cancel),
+                    onClick = onDismiss,
+                )
+                TextButton(
+                    text = stringResource(R.string.auto_page_background_enable),
+                    enabled = batteryUnrestricted && notificationGranted,
+                    onClick = onEnable,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PreferenceStatus(text: String, ready: Boolean) {
+    Text(
+        text = text,
+        color = if (ready) {
+            MiuixTheme.colorScheme.primary
+        } else {
+            MiuixTheme.colorScheme.onSurfaceVariantActions
+        },
+    )
 }
 
 /** Standard spacing used by Miuix preference cards. */

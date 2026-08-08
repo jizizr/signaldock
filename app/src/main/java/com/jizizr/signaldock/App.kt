@@ -1,6 +1,7 @@
 ﻿package com.jizizr.signaldock
 
 import android.app.Application
+import android.app.NotificationManager
 import org.lsposed.hiddenapibypass.HiddenApiBypass
 
 /**
@@ -17,6 +18,9 @@ import org.lsposed.hiddenapibypass.HiddenApiBypass
 class App : Application() {
     override fun onCreate() {
         super.onCreate()
+        // Remove the channel used by older builds that kept a persistent notification alive.
+        getSystemService(NotificationManager::class.java)
+            ?.deleteNotificationChannel("auto_page_keep_alive")
         DiagnosticLogStore.init(this)
         DiagnosticCrashHandler.init()
         AppLog.i(

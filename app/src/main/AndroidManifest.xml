@@ -5,6 +5,7 @@
     <queries>
         <package android:name="com.aios.osbot" />
         <package android:name="moe.shizuku.privileged.api" />
+        <package android:name="com.miui.securitycenter" />
         <intent>
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
@@ -18,6 +19,7 @@
     <!--  前台服务权限  -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <!--  Shizuku — 用于自动授权无障碍服务  -->
     <uses-permission android:name="shizuku.permission.API_V23" />

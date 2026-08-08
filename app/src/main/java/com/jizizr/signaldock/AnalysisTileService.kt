@@ -178,11 +178,16 @@ class AnalysisTileService : TileService() {
      * 调用时 AppShell.service 必须已连接。
      */
     private fun enableAccessibilityAndShoot() {
-        AppShell.enableAccessibility(this) { ok ->
+        val enable = if (AutoPageProfileStore.enabled) {
+            AppShell::repairAccessibility
+        } else {
+            AppShell::enableAccessibility
+        }
+        enable(this) callback@ { ok ->
             // onDone 在主线程
             if (!ok) {
                 openMainApp(R.string.tile_accessibility_enable_failed)
-                return@enableAccessibility
+                return@callback
             }
             var waited = 0
             val poll = object : Runnable {
