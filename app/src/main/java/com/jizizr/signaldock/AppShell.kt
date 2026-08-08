@@ -1,5 +1,6 @@
 ﻿package com.jizizr.signaldock
 
+import android.annotation.SuppressLint
 import android.app.ActivityManager
 import android.content.Context
 import android.content.pm.IPackageManager
@@ -24,6 +25,7 @@ import rikka.shizuku.SystemServiceHelper
  * - [isShizukuAvailable]：检查 Shizuku 是否可用且已授权
  * - [enableAccessibility]：共用的无障碍开启逻辑，避免 Activity / Tile 重复实现
  */
+@SuppressLint("BlockedPrivateApi")
 object AppShell {
     private const val TAG = "AppShell"
     private const val WECHAT_PACKAGE = "com.tencent.mm"
@@ -94,6 +96,23 @@ object AppShell {
         IPackageManager.Stub.asInterface(wrapper)
     }
 
+    // Reflection metadata is stable for the process lifetime; only the Binder proxy is
+    // recreated per call so a Shizuku restart cannot leave a stale proxy behind.
+    private val activityTaskManagerAsInterface by lazy {
+        Class.forName("android.app.IActivityTaskManager\$Stub")
+            .getDeclaredMethod("asInterface", IBinder::class.java)
+            .apply { isAccessible = true }
+    }
+
+    private fun activityTaskManagerProxy(): Any {
+        val originalBinder = SystemServiceHelper.getSystemService("activity_task")
+            ?: throw IllegalStateException("ActivityTaskManager binder not available")
+        return activityTaskManagerAsInterface.invoke(
+            null,
+            ShizukuBinderWrapper(originalBinder),
+        ) ?: throw IllegalStateException("IActivityTaskManager proxy not available")
+    }
+
     /**
      * Block or unblock network for [uid] via [IConnectivityManager] Binder IPC.
      *
@@ -141,13 +160,7 @@ object AppShell {
         }
 
         return try {
-            val originalBinder = SystemServiceHelper.getSystemService("activity_task")
-                ?: throw IllegalStateException("ActivityTaskManager binder not available")
-            val wrapper = ShizukuBinderWrapper(originalBinder)
-            val stubClass = Class.forName("android.app.IActivityTaskManager\$Stub")
-            val asInterface = stubClass.getDeclaredMethod("asInterface", IBinder::class.java)
-            val taskManager = asInterface.invoke(null, wrapper)
-                ?: throw IllegalStateException("IActivityTaskManager proxy not available")
+            val taskManager = activityTaskManagerProxy()
             val expectedParameters = arrayOf(
                 Int::class.javaPrimitiveType,
                 Int::class.javaPrimitiveType,
@@ -223,13 +236,7 @@ object AppShell {
     fun findForegroundAppTask(): ForegroundAppTask? {
         if (!isShizukuAvailable) return null
         return try {
-            val originalBinder = SystemServiceHelper.getSystemService("activity_task")
-                ?: throw IllegalStateException("ActivityTaskManager binder not available")
-            val wrapper = ShizukuBinderWrapper(originalBinder)
-            val stubClass = Class.forName("android.app.IActivityTaskManager\$Stub")
-            val asInterface = stubClass.getDeclaredMethod("asInterface", IBinder::class.java)
-            val taskManager = asInterface.invoke(null, wrapper)
-                ?: throw IllegalStateException("IActivityTaskManager proxy not available")
+            val taskManager = activityTaskManagerProxy()
             val foreground = queryForegroundTask(taskManager) ?: run {
                 AppLog.w(TAG, "Unable to query foreground task")
                 return null
@@ -279,13 +286,7 @@ object AppShell {
             return
         }
         runCatching {
-            val originalBinder = SystemServiceHelper.getSystemService("activity_task")
-                ?: error("ActivityTaskManager binder not available")
-            val wrapper = ShizukuBinderWrapper(originalBinder)
-            val stubClass = Class.forName("android.app.IActivityTaskManager\$Stub")
-            val asInterface = stubClass.getDeclaredMethod("asInterface", IBinder::class.java)
-            val taskManager = asInterface.invoke(null, wrapper)
-                ?: error("IActivityTaskManager proxy not available")
+            val taskManager = activityTaskManagerProxy()
             val foreground = queryForegroundTask(taskManager)
             SourceWindowDiagnostics.log(
                 if (foreground == null) {
@@ -342,13 +343,7 @@ object AppShell {
     fun startActivityFromRecents(taskId: Int): Boolean {
         if (!isShizukuAvailable || taskId < 0) return false
         return try {
-            val originalBinder = SystemServiceHelper.getSystemService("activity_task")
-                ?: throw IllegalStateException("ActivityTaskManager binder not available")
-            val wrapper = ShizukuBinderWrapper(originalBinder)
-            val stubClass = Class.forName("android.app.IActivityTaskManager\$Stub")
-            val asInterface = stubClass.getDeclaredMethod("asInterface", IBinder::class.java)
-            val taskManager = asInterface.invoke(null, wrapper)
-                ?: throw IllegalStateException("IActivityTaskManager proxy not available")
+            val taskManager = activityTaskManagerProxy()
             val method = taskManager.javaClass.methods.first { candidate ->
                 candidate.name == "startActivityFromRecents" &&
                     candidate.parameterTypes.size == 2 &&
@@ -407,6 +402,57 @@ object AppShell {
                 mainHandler.post { onDone(true) }
             } catch (e: Exception) {
                 AppLog.e(TAG, "enableAccessibility failed", e)
+                mainHandler.post { onDone(false) }
+            }
+        }
+    }
+
+    /** User-triggered GKD-style repair for a stale accessibility binding. */
+    fun repairAccessibility(ctx: Context, onDone: (Boolean) -> Unit) {
+        if (!isShizukuAvailable) {
+            mainHandler.post { onDone(false) }
+            return
+        }
+        privilegedExecutor.execute {
+            try {
+                if (ctx.checkSelfPermission(android.Manifest.permission.WRITE_SECURE_SETTINGS) !=
+                    PackageManager.PERMISSION_GRANTED
+                ) {
+                    val userId = android.os.Process.myUid() / 100000
+                    iPackageManager.grantRuntimePermission(
+                        ctx.packageName,
+                        android.Manifest.permission.WRITE_SECURE_SETTINGS,
+                        userId,
+                    )
+                }
+                val resolver = ctx.contentResolver
+                val component = "${ctx.packageName}/${AccessibilityScreenshotService::class.java.name}"
+                val existing = Settings.Secure.getString(
+                    resolver,
+                    Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,
+                ).orEmpty()
+                val withoutSelf = existing.split(':')
+                    .filter { it.isNotBlank() && !it.equals(component, ignoreCase = true) }
+                    .joinToString(":")
+                if (withoutSelf != existing) {
+                    Settings.Secure.putString(
+                        resolver,
+                        Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,
+                        withoutSelf,
+                    )
+                    Thread.sleep(350)
+                }
+                val restored = if (withoutSelf.isBlank()) component else "$withoutSelf:$component"
+                Settings.Secure.putString(
+                    resolver,
+                    Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,
+                    restored,
+                )
+                Settings.Secure.putString(resolver, Settings.Secure.ACCESSIBILITY_ENABLED, "1")
+                AppLog.i(TAG, "Accessibility service repair requested")
+                mainHandler.post { onDone(true) }
+            } catch (error: Throwable) {
+                AppLog.e(TAG, "Accessibility service repair failed", error)
                 mainHandler.post { onDone(false) }
             }
         }

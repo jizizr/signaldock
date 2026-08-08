@@ -102,7 +102,10 @@ object SourceIconCache {
         bitmap: Bitmap?,
         taskId: Int?,
     ) {
-        entries[sessionId] = Entry(packageName, bitmap, "recognition_history", taskId)
+        entries.compute(sessionId) { _, current ->
+            current?.bitmap?.takeUnless { it === bitmap }?.recycle()
+            Entry(packageName, bitmap, "recognition_history", taskId)
+        }
     }
 
     fun remove(sessionId: Int) {

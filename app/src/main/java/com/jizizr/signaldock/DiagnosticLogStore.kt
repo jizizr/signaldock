@@ -95,7 +95,7 @@ object DiagnosticLogStore {
             fileLoggingEnabled = contextRef
                 .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 .getBoolean(KEY_ENABLED, true)
-            startWriterIfNeeded()
+            if (fileLoggingEnabled) startWriterIfNeeded()
         }
     }
 
@@ -122,6 +122,7 @@ object DiagnosticLogStore {
 
     fun record(priority: Int, tag: String, message: String, throwable: Throwable?) {
         if (!fileLoggingEnabled || appContext == null) return
+        startWriterIfNeeded()
         val entry = Command.Entry(
             timestampMs = System.currentTimeMillis(),
             priority = priority,

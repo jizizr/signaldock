@@ -3,9 +3,11 @@
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.app.KeyguardManager
+import android.content.Context.WINDOW_SERVICE
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Color
 import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
@@ -13,6 +15,9 @@ import android.os.Process
 import android.os.SystemClock
 import android.util.Base64
 import android.view.Display
+import android.view.Gravity
+import android.view.View
+import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.widget.Toast
 import java.util.concurrent.CompletableFuture
@@ -81,8 +86,11 @@ class AccessibilityScreenshotService : AccessibilityService() {
     @Volatile
     private var activeAutoSessionId: Int? = null
     private var lastActivityClassName = ""
+    private var lastActivityPackageName = ""
     private val autoEvaluateRunnable = Runnable(::runAutoEvaluationWhenStable)
     private val autoResetRunnable = Runnable(::confirmAutoPageExit)
+    private var keepAliveOverlay: View? = null
+    private val windowManager by lazy { getSystemService(WINDOW_SERVICE) as WindowManager }
 
     private sealed interface CaptureTrigger {
         val startedAtMs: Long
@@ -107,6 +115,7 @@ class AccessibilityScreenshotService : AccessibilityService() {
         super.onServiceConnected()
         instance = this
         refreshAutoConfiguration()
+        syncKeepAliveOverlay()
         AppLog.i(TAG, "AccessibilityScreenshotService connected  ready to capture")
         AutoPageDiagnostics.log(
             "stage=service-connected globalEnabled=${AutoPageProfileStore.enabled} " +
@@ -145,7 +154,12 @@ class AccessibilityScreenshotService : AccessibilityService() {
             return
         }
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
-            event.className?.toString()?.takeIf(String::isNotBlank)?.let {
+            val observedClassName = event.className?.toString().orEmpty()
+            if (packageName != lastActivityPackageName) {
+                lastActivityClassName = ""
+                lastActivityPackageName = packageName
+            }
+            observedClassName.takeIf(String::isNotBlank)?.let {
                 lastActivityClassName = it
             }
         }
@@ -177,8 +191,11 @@ class AccessibilityScreenshotService : AccessibilityService() {
                     "package=$packageName activity=${event.className}",
             )
         }
+        val observedActivityClassName = lastActivityClassName
+            .takeIf { lastActivityPackageName == packageName }
+            .orEmpty()
         val identityCandidates = profiles.filter { profile ->
-            AutoPageMatcher.canMatchIdentity(profile, packageName, lastActivityClassName)
+            AutoPageMatcher.canMatchIdentity(profile, packageName, observedActivityClassName)
         }
         if (identityCandidates.isEmpty()) {
             logAutoEvent(event, "ignored-identity-mismatch")
@@ -198,7 +215,11 @@ class AccessibilityScreenshotService : AccessibilityService() {
     override fun onInterrupt() { /* not used */ }
 
     override fun onDestroy() {
+        removeKeepAliveOverlay()
         instance = null
+        AutoPageDiagnostics.log(
+            "stage=service-destroy globalEnabled=${AutoPageProfileStore.enabled}",
+        )
         mainHandler.removeCallbacksAndMessages(null)
         callbackExecutor.shutdown()
         analysisExecutor.shutdown()
@@ -206,6 +227,8 @@ class AccessibilityScreenshotService : AccessibilityService() {
         configuredProfiles = emptyList()
         availableProfiles = emptyList()
         targetPackages = emptySet()
+        lastActivityClassName = ""
+        lastActivityPackageName = ""
         AppLog.i(TAG, "AccessibilityScreenshotService destroyed")
         super.onDestroy()
     }
@@ -218,11 +241,58 @@ class AccessibilityScreenshotService : AccessibilityService() {
             configuredProfiles = AutoPageProfileStore.enabledProfiles()
             updateRuntimeEventFilter()
             if (configuredProfiles.isEmpty()) resetAutoPageState()
+            syncKeepAliveOverlay()
             AppLog.i(TAG, "auto configuration refreshed profiles=${configuredProfiles.size}")
             AutoPageDiagnostics.log(
                 "stage=config-refresh globalEnabled=${AutoPageProfileStore.enabled} " +
                     "configured=${configuredProfiles.joinToString { AutoPageDiagnostics.profileRef(it.id) }}",
             )
+        }
+    }
+
+    /** GKD-style accessibility anchor, active only for automatic island mode. */
+    private fun syncKeepAliveOverlay() {
+        if (
+            AutoPageProfileStore.enabled &&
+            AutoPageProfileStore.hasEnabledProfiles() &&
+            AutoPageBackgroundPolicy.requirementsSatisfied(this)
+        ) {
+            addKeepAliveOverlay()
+        } else {
+            removeKeepAliveOverlay()
+        }
+    }
+
+    private fun addKeepAliveOverlay() {
+        if (keepAliveOverlay != null) return
+        val view = View(this).apply {
+            setBackgroundColor(Color.TRANSPARENT)
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }
+        val layoutParams = WindowManager.LayoutParams().apply {
+            type = WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY
+            format = android.graphics.PixelFormat.TRANSLUCENT
+            flags = WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+            gravity = Gravity.TOP or Gravity.START
+            width = 1
+            height = 1
+            packageName = packageName
+        }
+        runCatching {
+            windowManager.addView(view, layoutParams)
+            keepAliveOverlay = view
+            AppLog.d(TAG, "Accessibility keep-alive overlay attached")
+        }.onFailure { error ->
+            AppLog.w(TAG, "Unable to attach accessibility keep-alive overlay", error)
+        }
+    }
+
+    private fun removeKeepAliveOverlay() {
+        keepAliveOverlay?.let { view ->
+            runCatching { windowManager.removeView(view) }
+            keepAliveOverlay = null
+            AppLog.d(TAG, "Accessibility keep-alive overlay removed")
         }
     }
 
@@ -234,7 +304,7 @@ class AccessibilityScreenshotService : AccessibilityService() {
         serviceInfo = serviceInfo.apply {
             eventTypes = if (availableProfiles.isEmpty()) 0 else AUTO_EVENT_TYPES
             feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC
-            notificationTimeout = 150L
+            notificationTimeout = 300L
             packageNames = targetPackages.takeIf { it.isNotEmpty() }?.toTypedArray()
         }
         AutoPageDiagnostics.log(
