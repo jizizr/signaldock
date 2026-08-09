@@ -128,8 +128,8 @@ android {
         applicationId = "com.jizizr.signaldock"
         minSdk = 36
         targetSdk = 36
-        versionCode = 7
-        versionName = "1.2.1"
+        versionCode = 8
+        versionName = "1.2.2"
 
         buildConfigField(
             "boolean",
