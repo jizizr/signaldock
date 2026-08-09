@@ -114,6 +114,7 @@ class AccessibilityScreenshotService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
+        AccessibilityStartupRecovery.onAccessibilityConnected()
         refreshAutoConfiguration()
         syncKeepAliveOverlay()
         AppLog.i(TAG, "AccessibilityScreenshotService connected  ready to capture")

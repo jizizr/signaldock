@@ -38,6 +38,7 @@ class App : Application() {
         SuperIslandSettingsStore.init(this)
         AutoPageProfileStore.init(this)
         AutoPageNotificationLockStore.init(this)
+        AccessibilityStartupRecovery.init(this)
         if (
             AiSettingsStore.miclawUseExternalAgent &&
             !MiclawAgentClient.isCompatibilitySupported(this)

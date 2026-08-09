@@ -10,6 +10,50 @@ import org.junit.Test
 
 class CoreModelTest {
     @Test
+    fun accessibilityStartupRecovery_runsOnlyForAnUnboundAutoPageService() {
+        assertTrue(
+            shouldRecoverAccessibilityOnStartup(
+                autoPageEnabled = true,
+                hasEnabledProfiles = true,
+                backgroundAllowed = true,
+                serviceConnected = false,
+            ),
+        )
+        assertFalse(
+            shouldRecoverAccessibilityOnStartup(
+                autoPageEnabled = false,
+                hasEnabledProfiles = true,
+                backgroundAllowed = true,
+                serviceConnected = false,
+            ),
+        )
+        assertFalse(
+            shouldRecoverAccessibilityOnStartup(
+                autoPageEnabled = true,
+                hasEnabledProfiles = false,
+                backgroundAllowed = true,
+                serviceConnected = false,
+            ),
+        )
+        assertFalse(
+            shouldRecoverAccessibilityOnStartup(
+                autoPageEnabled = true,
+                hasEnabledProfiles = true,
+                backgroundAllowed = false,
+                serviceConnected = false,
+            ),
+        )
+        assertFalse(
+            shouldRecoverAccessibilityOnStartup(
+                autoPageEnabled = true,
+                hasEnabledProfiles = true,
+                backgroundAllowed = true,
+                serviceConnected = true,
+            ),
+        )
+    }
+
+    @Test
     fun customModel_defaultsToEmptyConnectionFields() {
         val custom = AiSettingsStore.PRESETS.single {
             it.id == AiSettingsStore.CUSTOM_PRESET_ID
