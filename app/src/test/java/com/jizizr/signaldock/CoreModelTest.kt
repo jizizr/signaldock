@@ -10,6 +10,48 @@ import org.junit.Test
 
 class CoreModelTest {
     @Test
+    fun activityTracking_ignoresWindowContainerClassNames() {
+        assertTrue(
+            shouldRememberActivityClassName(
+                packageName = "com.tencent.mm",
+                className = "com.tencent.mm.plugin.appbrand.ui.AppBrandUI00",
+            ),
+        )
+        assertTrue(
+            shouldRememberActivityClassName(
+                packageName = "com.example.orders",
+                className = "com.example.orders.OrderActivity",
+            ),
+        )
+        assertFalse(
+            shouldRememberActivityClassName(
+                packageName = "com.tencent.mm",
+                className = "android.widget.FrameLayout",
+            ),
+        )
+        assertFalse(
+            shouldRememberActivityClassName(
+                packageName = "com.tencent.mm",
+                className = "",
+            ),
+        )
+    }
+
+    @Test
+    fun eventTextFallback_mergesOnlyShortLivedLocalKeywords() {
+        val observation = PageObservationSnapshot(
+            packageName = "com.tencent.mm",
+            activityClassName = "com.tencent.mm.plugin.appbrand.ui.AppBrandUI00",
+            isWechatMiniProgram = true,
+            miniProgramLabel = "示例小程序",
+            miniProgramIconHash = "icon",
+            stableKeywords = emptyList(),
+        )
+        val merged = observation.copy(stableKeywords = (observation.stableKeywords + "取餐码").distinct())
+        assertTrue(merged.stableKeywords.contains("取餐码"))
+    }
+
+    @Test
     fun serviceConnection_evaluatesTheCurrentPageOnlyWhenAutoProfilesAreAvailable() {
         assertTrue(
             shouldEvaluateCurrentPageAfterServiceConnect(

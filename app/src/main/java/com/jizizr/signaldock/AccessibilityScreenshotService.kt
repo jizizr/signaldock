@@ -44,6 +44,8 @@ class AccessibilityScreenshotService : AccessibilityService() {
         private const val SOURCE_ICON_RECOGNIZING_WAIT_MS = 250L
         private const val AUTO_EVENT_DEBOUNCE_MS = 600L
         private const val AUTO_REARM_DELAY_MS = 800L
+        private const val ACCESSIBILITY_EVENT_TEXT_TTL_MS = 2_000L
+        private const val MAX_ACCESSIBILITY_EVENT_TEXTS = 48
         private val AUTO_EVENT_TYPES =
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or
                 AccessibilityEvent.TYPE_WINDOWS_CHANGED or
@@ -87,6 +89,7 @@ class AccessibilityScreenshotService : AccessibilityService() {
     private var activeAutoSessionId: Int? = null
     private var lastActivityClassName = ""
     private var lastActivityPackageName = ""
+    private val recentAccessibilityEventTexts = ArrayDeque<RecentAccessibilityEventText>()
     private val autoEvaluateRunnable = Runnable(::runAutoEvaluationWhenStable)
     private val autoResetRunnable = Runnable(::confirmAutoPageExit)
     private var keepAliveOverlay: View? = null
@@ -149,6 +152,7 @@ class AccessibilityScreenshotService : AccessibilityService() {
             logAutoEvent(event, "ignored-self")
             return
         }
+        recordAccessibilityEventText(event, packageName)
         val profiles = availableProfiles
         if (profiles.isEmpty()) {
             logAutoEvent(event, "ignored-no-available-profiles")
@@ -160,7 +164,9 @@ class AccessibilityScreenshotService : AccessibilityService() {
                 lastActivityClassName = ""
                 lastActivityPackageName = packageName
             }
-            observedClassName.takeIf(String::isNotBlank)?.let {
+            observedClassName.takeIf {
+                shouldRememberActivityClassName(packageName, it)
+            }?.let {
                 lastActivityClassName = it
             }
         }
@@ -447,6 +453,12 @@ class AccessibilityScreenshotService : AccessibilityService() {
         )
         val inspection = SourceIconResolver.inspect(this, lastActivityClassName)
         val packageName = inspection.packageName.orEmpty()
+        inspection.activityClassName.takeIf {
+            shouldRememberActivityClassName(packageName, it)
+        }?.let { activityClassName ->
+            lastActivityPackageName = packageName
+            lastActivityClassName = activityClassName
+        }
         AutoPageDiagnostics.log(
             "stage=inspection package=$packageName activity=${inspection.activityClassName} " +
                 "mini=${inspection.isWechatMiniProgram} miniTask=${inspection.miniProgramTaskId} " +
@@ -462,6 +474,9 @@ class AccessibilityScreenshotService : AccessibilityService() {
             return
         }
         val observation = inspection.toObservation()
+            .withRecentAccessibilityEventText(
+                recentTexts = recentAccessibilityEventKeywords(packageName),
+            )
         val ranked = AutoPageMatcher.rank(observation, profiles)
         profiles.forEach { profile ->
             AutoPageDiagnostics.log(
@@ -1044,6 +1059,55 @@ class AccessibilityScreenshotService : AccessibilityService() {
         activeMiniProgramTaskId = -1
     }
 
+    private fun recordAccessibilityEventText(
+        event: AccessibilityEvent,
+        packageName: String,
+    ) {
+        val values = buildList {
+            addAll(event.text.map(CharSequence::toString))
+            event.contentDescription?.toString()?.let(::add)
+        }.map(::normalizePageText)
+            .filter { it.length in 2..96 && !isDynamicPageText(it) }
+            .distinct()
+        if (values.isEmpty()) return
+        val now = SystemClock.uptimeMillis()
+        synchronized(recentAccessibilityEventTexts) {
+            while (recentAccessibilityEventTexts.isNotEmpty() &&
+                now - recentAccessibilityEventTexts.first().atMs > ACCESSIBILITY_EVENT_TEXT_TTL_MS
+            ) {
+                recentAccessibilityEventTexts.removeFirst()
+            }
+            values.forEach { value ->
+                recentAccessibilityEventTexts.addLast(
+                    RecentAccessibilityEventText(packageName, value, now),
+                )
+            }
+            while (recentAccessibilityEventTexts.size > MAX_ACCESSIBILITY_EVENT_TEXTS) {
+                recentAccessibilityEventTexts.removeFirst()
+            }
+        }
+        AutoPageDiagnostics.log(
+            "stage=event-text-captured package=$packageName count=${values.size}",
+        )
+    }
+
+    private fun recentAccessibilityEventKeywords(packageName: String): List<String> {
+        val now = SystemClock.uptimeMillis()
+        synchronized(recentAccessibilityEventTexts) {
+            while (recentAccessibilityEventTexts.isNotEmpty() &&
+                now - recentAccessibilityEventTexts.first().atMs > ACCESSIBILITY_EVENT_TEXT_TTL_MS
+            ) {
+                recentAccessibilityEventTexts.removeFirst()
+            }
+            return recentAccessibilityEventTexts
+                .asSequence()
+                .filter { it.packageName == packageName }
+                .map(RecentAccessibilityEventText::text)
+                .distinct()
+                .toList()
+        }
+    }
+
     internal fun diagnosticAutoPageSnapshot(): String {
         if (!AutoPageDiagnostics.enabled) return "disabled"
         val root = runCatching { rootInActiveWindow }.getOrNull()
@@ -1163,6 +1227,12 @@ class AccessibilityScreenshotService : AccessibilityService() {
         stableKeywords = stableKeywords,
     )
 
+    private fun PageObservationSnapshot.withRecentAccessibilityEventText(
+        recentTexts: List<String>,
+    ): PageObservationSnapshot = copy(
+        stableKeywords = (stableKeywords + recentTexts).distinct().take(80),
+    )
+
     private fun PageObservationSnapshot.contentSignature(): String = buildString {
         append(packageName)
         append('|')
@@ -1210,7 +1280,19 @@ class AccessibilityScreenshotService : AccessibilityService() {
     }
 }
 
+private data class RecentAccessibilityEventText(
+    val packageName: String,
+    val text: String,
+    val atMs: Long,
+)
+
 internal fun shouldEvaluateCurrentPageAfterServiceConnect(
     autoPageEnabled: Boolean,
     availableProfileCount: Int,
 ): Boolean = autoPageEnabled && availableProfileCount > 0
+
+internal fun shouldRememberActivityClassName(
+    packageName: String,
+    className: String,
+): Boolean = packageName.isNotBlank() &&
+    className.startsWith("$packageName.")
