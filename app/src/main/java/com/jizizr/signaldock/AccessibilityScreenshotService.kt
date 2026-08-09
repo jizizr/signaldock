@@ -115,7 +115,7 @@ class AccessibilityScreenshotService : AccessibilityService() {
         super.onServiceConnected()
         instance = this
         AccessibilityStartupRecovery.onAccessibilityConnected()
-        refreshAutoConfiguration()
+        refreshAutoConfiguration(evaluateCurrentPage = true)
         syncKeepAliveOverlay()
         AppLog.i(TAG, "AccessibilityScreenshotService connected  ready to capture")
         AutoPageDiagnostics.log(
@@ -236,13 +236,25 @@ class AccessibilityScreenshotService : AccessibilityService() {
 
     //  Public API
 
-    fun refreshAutoConfiguration() {
+    fun refreshAutoConfiguration(evaluateCurrentPage: Boolean = false) {
         mainHandler.post {
             AutoPageNotificationLockStore.pruneMissingNotifications(this)
             configuredProfiles = AutoPageProfileStore.enabledProfiles()
             updateRuntimeEventFilter()
             if (configuredProfiles.isEmpty()) resetAutoPageState()
             syncKeepAliveOverlay()
+            if (
+                evaluateCurrentPage &&
+                shouldEvaluateCurrentPageAfterServiceConnect(
+                    autoPageEnabled = AutoPageProfileStore.enabled,
+                    availableProfileCount = availableProfiles.size,
+                )
+            ) {
+                scheduleAutoEvaluation()
+                AutoPageDiagnostics.log(
+                    "stage=service-bootstrap-evaluation profiles=${availableProfiles.size}",
+                )
+            }
             AppLog.i(TAG, "auto configuration refreshed profiles=${configuredProfiles.size}")
             AutoPageDiagnostics.log(
                 "stage=config-refresh globalEnabled=${AutoPageProfileStore.enabled} " +
@@ -1197,3 +1209,8 @@ class AccessibilityScreenshotService : AccessibilityService() {
         }
     }
 }
+
+internal fun shouldEvaluateCurrentPageAfterServiceConnect(
+    autoPageEnabled: Boolean,
+    availableProfileCount: Int,
+): Boolean = autoPageEnabled && availableProfileCount > 0

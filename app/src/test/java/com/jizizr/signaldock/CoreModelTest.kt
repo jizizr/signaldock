@@ -10,6 +10,28 @@ import org.junit.Test
 
 class CoreModelTest {
     @Test
+    fun serviceConnection_evaluatesTheCurrentPageOnlyWhenAutoProfilesAreAvailable() {
+        assertTrue(
+            shouldEvaluateCurrentPageAfterServiceConnect(
+                autoPageEnabled = true,
+                availableProfileCount = 1,
+            ),
+        )
+        assertFalse(
+            shouldEvaluateCurrentPageAfterServiceConnect(
+                autoPageEnabled = false,
+                availableProfileCount = 1,
+            ),
+        )
+        assertFalse(
+            shouldEvaluateCurrentPageAfterServiceConnect(
+                autoPageEnabled = true,
+                availableProfileCount = 0,
+            ),
+        )
+    }
+
+    @Test
     fun accessibilityStartupRecovery_runsOnlyForAnUnboundAutoPageService() {
         assertTrue(
             shouldRecoverAccessibilityOnStartup(
