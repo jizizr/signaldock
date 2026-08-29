@@ -240,22 +240,74 @@ class CoreModelTest {
     }
 
     @Test
-    fun islandNarrowFont_appliesToNumericAndLatinCodes() {
-        assertTrue(supportsNarrowFont("35060"))
-        assertTrue(supportsNarrowFont("1234567"))
-        assertTrue(supportsNarrowFont("AB-12345"))
-        assertFalse(supportsNarrowFont("取餐码35060"))
+    fun resultIslandCapsule_alwaysUsesNarrowFontAndMeasurementPadding() {
+        assertTrue(RESULT_ISLAND_NARROW_FONT)
+        assertEquals("35060\u2009", resultIslandCapsuleText("35060"))
+        assertEquals("取餐码 35060\u2009", resultIslandCapsuleText("取餐码 35060  "))
     }
 
     @Test
-    fun islandNarrowFont_addsRightSideMeasurementPadding() {
-        assertTrue(islandCapsuleText("35060", narrowFont = true).endsWith("\u2009"))
-        assertFalse(islandCapsuleText("取餐码", narrowFont = false).endsWith("\u2009"))
+    fun recognizingIsland_usesHyperOsThinkingAnimationProtocolWhenAvailable() {
+        assertEquals(
+            IslandPicSpec(
+                type = RECOGNIZING_SYSTEM_ICON_TYPE,
+                key = RECOGNIZING_SYSTEM_ICON_KEY,
+                autoplay = true,
+            ),
+            recognizingIslandPicSpec(),
+        )
     }
 
     @Test
-    fun islandPrice_addsPaddingToTheLastCapsuleField() {
-        assertTrue(islandCapsuleText("¥29.90", narrowFont = true).endsWith("\u2009"))
+    fun recognizingIsland_startsCompactInsteadOfFirstFloat() {
+        assertFalse(ISLAND_FIRST_FLOAT)
+    }
+
+    @Test
+    fun islandProperty_keepsRecognitionTemporaryButResultsPersistent() {
+        assertEquals(RECOGNIZING_ISLAND_PROPERTY, islandPropertyFor(statusOnly = true))
+        assertEquals(RESULT_ISLAND_PROPERTY, islandPropertyFor(statusOnly = false))
+        assertTrue(RESULT_ISLAND_PROPERTY != RECOGNIZING_ISLAND_PROPERTY)
+    }
+
+    @Test
+    fun resultRepost_decidesAtExecutionTimeForCurrentSession() {
+        assertEquals(
+            ResultNotificationPublishDecision.FOREGROUND_REPOSTED,
+            resultNotificationPublishDecision(
+                isForeground = true,
+                foregroundSessionId = 7003,
+                notificationId = 7003,
+                activeSession = true,
+            ),
+        )
+        assertEquals(
+            ResultNotificationPublishDecision.NORMAL_REPOST,
+            resultNotificationPublishDecision(
+                isForeground = true,
+                foregroundSessionId = 7003,
+                notificationId = 7004,
+                activeSession = true,
+            ),
+        )
+        assertEquals(
+            ResultNotificationPublishDecision.NORMAL_REPOST,
+            resultNotificationPublishDecision(
+                isForeground = false,
+                foregroundSessionId = 7003,
+                notificationId = 7003,
+                activeSession = true,
+            ),
+        )
+        assertEquals(
+            ResultNotificationPublishDecision.DROP,
+            resultNotificationPublishDecision(
+                isForeground = true,
+                foregroundSessionId = 7003,
+                notificationId = 7003,
+                activeSession = false,
+            ),
+        )
     }
 
     @Test
@@ -273,6 +325,20 @@ class CoreModelTest {
                 merchant = "蜜雪冰城",
             )
         )
+    }
+
+    @Test
+    fun islandDetailTag_usesTheExpandedTitleSideTagProtocol() {
+        assertEquals(
+            IslandDetailTagSpec(
+                text = "正常冰 · 七分糖",
+                textColor = "#2F80ED",
+                darkTextColor = "#79B8FF",
+                backgroundColor = "#182F80ED",
+            ),
+            islandDetailTagSpec("  正常冰 · 七分糖  "),
+        )
+        assertNull(islandDetailTagSpec("  "))
     }
 
     @Test

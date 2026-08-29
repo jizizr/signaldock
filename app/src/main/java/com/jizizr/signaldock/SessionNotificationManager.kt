@@ -16,6 +16,18 @@ data class SessionNotificationResult(
     val hasQrBitmap: Boolean = false,
 )
 
+/** How a result publisher should complete a notification replacement. */
+enum class ResultNotificationPublishDecision {
+    /** The session ended while the result was waiting in the bypass queue. */
+    DROP,
+
+    /** The record is active but is not the service's foreground anchor. */
+    NORMAL_REPOST,
+
+    /** The caller already replaced the foreground anchor with the result. */
+    FOREGROUND_REPOSTED,
+}
+
 /**
  * 通知提供器接口。
  *
@@ -41,12 +53,19 @@ interface SessionNotificationManager {
         onForegroundReady: (notifId: Int, notif: Notification) -> Unit,
     )
 
-    /** 发送/更新结果通知（允许异步） */
+    /**
+     * 发送/更新结果通知（允许异步）。
+     *
+     * [publishDecision] 由需要在真正投递结果时判断通知生命周期的提供器调用。
+     * 它可以丢弃已结束的会话、执行普通 cancel → notify，或由前台服务完成
+     * stopForeground → startForeground。标准通知提供器不需要使用它。
+     */
     fun sendResultNotification(
         context: Context,
         sessionId: Int,
         result: SessionNotificationResult,
         dismissIntent: PendingIntent,
+        publishDecision: ((notifId: Int, notif: Notification) -> ResultNotificationPublishDecision)? = null,
     )
 
     /**

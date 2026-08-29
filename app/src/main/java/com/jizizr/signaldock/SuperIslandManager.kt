@@ -13,6 +13,47 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
+ * PicInfo values understood by HyperOS SystemUI's island renderer.
+ *
+ * The recognizing phase intentionally references the system-provided
+ * `xiaoai_thinking` key instead of bundling Xiaomi's animation. The key is
+ * resolved by HyperOS SystemUI's Lottie renderer.
+ */
+internal const val RECOGNIZING_SYSTEM_ICON_KEY = "xiaoai_thinking"
+internal const val RECOGNIZING_SYSTEM_ICON_TYPE = 7
+internal const val RECOGNIZING_ISLAND_PROPERTY = 0
+internal const val RESULT_ISLAND_PROPERTY = 1
+internal const val ISLAND_FIRST_FLOAT = false
+internal const val RESULT_ISLAND_NARROW_FONT = true
+
+internal data class IslandPicSpec(
+    val type: Int,
+    val key: String,
+    val autoplay: Boolean? = null,
+)
+
+internal fun recognizingIslandPicSpec(): IslandPicSpec = IslandPicSpec(
+    type = RECOGNIZING_SYSTEM_ICON_TYPE,
+    key = RECOGNIZING_SYSTEM_ICON_KEY,
+    autoplay = true,
+)
+
+/**
+ * HyperOS treats property 0 as a one-shot/temporary island:
+ * it is deliberately excluded from the notification shade and a later
+ * property-0 island replaces the previous temporary island. Recognition
+ * uses that behavior; completed results must use the persistent property.
+ */
+internal fun islandPropertyFor(statusOnly: Boolean): Int =
+    if (statusOnly) RECOGNIZING_ISLAND_PROPERTY else RESULT_ISLAND_PROPERTY
+
+private fun IslandPicSpec.toJson(): JSONObject = JSONObject().apply {
+    put("type", type)
+    put("pic", key)
+    autoplay?.let { put("autoplay", it) }
+}
+
+/**
  * 超级岛通知管理器 —— 独立于现有 LiveUpdateService 的平行通知体系。
  *
  * 核心流程（绕过白名单）：
@@ -33,6 +74,7 @@ object SuperIslandManager : SessionNotificationManager {
     /** 超级岛调试通知 ID（与 LiveUpdateService 的 ID 不冲突） */
     private const val ISLAND_NOTIFICATION_ID = 9001
     private const val MAX_TEST_NOTIFICATION_ID = 9999
+    private const val RECOGNIZING_HIGHLIGHT_COLOR = "#3482FF"
 
     /**
      * xmsf 网络盲窗时长（ms），保持 disable 状态足够久，
@@ -184,7 +226,7 @@ object SuperIslandManager : SessionNotificationManager {
      * 展开态使用模板 10：文本组件2 + 识别图形组件1 + 按钮组件3。
      * ┌─────────────────────────────────────┐
      * │  baseInfo                 │ picInfo  │
-     * │  商品名 [规格] / 商家名     │ 商家 Logo │
+     * │  商品名 [规格标签] / 商家名   │ 商家 Logo │
      * ├──────────────────────────┴──────────┤
      * │  hintInfo (按钮组件3)               │
      * │  取餐码  [价格标签]      [操作按钮] │
@@ -194,10 +236,10 @@ object SuperIslandManager : SessionNotificationManager {
      * @param content    通知详情及无商家信息时的次要文本
      * @param ticker     状态栏显示文案
      * @param keyText    小岛右侧文本 + hintInfo 主要文本（如取餐号、识别结果）
-     * @param ongoing    是否为持续性通知（识别中 = true，结果 = false）
+     * @param ongoing    是否为持续性通知
      * @param updatable  是否可更新
      * @param islandTimeout 岛自动消失时间（秒）
-     * @param hintActionTitle 按钮组件3 操作按钮文字，空则不显示按钮
+     * @param actionTitle 按钮组件3 操作按钮文字，空则不显示按钮
      */
     private fun buildIslandNotification(
         context: Context,
@@ -224,14 +266,21 @@ object SuperIslandManager : SessionNotificationManager {
         statusOnly: Boolean = false,
     ): Notification {
         ensureChannels(context)
-        val appIcon = sourceIcon
-            ?: Icon.createWithResource(context, R.mipmap.ic_launcher)
-
-        // ── pics Bundle ──
-        val pics = Bundle().apply {
-            putParcelable("miui.focus.pic_ticker", appIcon)
-            putParcelable("miui.focus.pic_small", appIcon)
-            putParcelable("miui.focus.pic_icon", appIcon)
+        val islandPicSpec = if (statusOnly) {
+            recognizingIslandPicSpec()
+        } else {
+            IslandPicSpec(type = 1, key = "miui.focus.pic_icon")
+        }
+        // 识别态使用 SystemUI 内置的 Lottie key，不需要创建或序列化应用图标。
+        val pics = if (statusOnly) {
+            null
+        } else {
+            val appIcon = sourceIcon ?: Icon.createWithResource(context, R.mipmap.ic_launcher)
+            Bundle().apply {
+                putParcelable("miui.focus.pic_ticker", appIcon)
+                putParcelable("miui.focus.pic_small", appIcon)
+                putParcelable("miui.focus.pic_icon", appIcon)
+            }
         }
 
         // ── 展开态：文本组件2 (baseInfo) ──
@@ -248,11 +297,17 @@ object SuperIslandManager : SessionNotificationManager {
             put("colorContentDark", "#B8B8B8")
             put("showDivider", false)
             put("showContentDivider", false)
-            if (!statusOnly && productText.detail.isNotBlank()) {
-                put("specialTitle", productText.detail)
-                put("colorSpecialTitle", "#2F80ED")
-                put("colorSpecialTitleDark", "#79B8FF")
-                put("colorSpecialBg", "#182F80ED")
+            if (!statusOnly) {
+                islandDetailTagSpec(productText.detail)?.let { tag ->
+                    // specialTitle is HyperOS's dedicated title-side tag. The compact
+                    // Dynamic Island reads only param_island.bigIslandArea, so keeping
+                    // this field in the expanded template does not add the detail to the
+                    // compact code capsule.
+                    put("specialTitle", tag.text)
+                    put("colorSpecialTitle", tag.textColor)
+                    put("colorSpecialTitleDark", tag.darkTextColor)
+                    put("colorSpecialBg", tag.backgroundColor)
+                }
             }
         }
 
@@ -292,58 +347,49 @@ object SuperIslandManager : SessionNotificationManager {
         // ── 超级岛配置 (param_island) ──
         // 小岛（压缩态）：仅显示图标圈
         val smallPicInfo = JSONObject().apply {
-            put("type", 1)
-            put("pic", "miui.focus.pic_small")
+            put("type", islandPicSpec.type)
+            put("pic", if (islandPicSpec.type == 1) "miui.focus.pic_small" else islandPicSpec.key)
+            islandPicSpec.autoplay?.let { put("autoplay", it) }
         }
         val smallIslandArea = JSONObject().apply {
             put("picInfo", smallPicInfo)
         }
 
-        // 大岛（摘要态胶囊）：左侧圆形图标，右侧关键文字
-        // imageTextInfoLeft：只放 picInfo（图标）
+        // 大岛（摘要态胶囊）：左侧圆形图标，右侧关键文字。
+        //
+        // 识别态不能复用结果岛的 template-10 结构。超级小爱“记忆中”使用
+        // islandProperty=0 的一次性岛协议：bigIslandArea 是
+        //   picInfo + imageTextInfoLeft + textInfo
+        // 而不是结果岛的 imageTextInfoLeft + imageTextInfoRight。后者会让
+        // SystemUI 在首次发布时直接走可展开的大岛路径。
         val imageTextInfoLeft = JSONObject().apply {
             put("type", 1)  // 1 = 左边组件
-            put("picInfo", JSONObject().apply {
-                put("type", 1)
-                put("pic", "miui.focus.pic_icon")
-            })
+            put("picInfo", islandPicSpec.toJson())
         }
-        // imageTextInfoRight：摘要态保持紧凑，只显示关键码；价格仅在展开态展示。
-        val useNarrowFont = supportsNarrowFont(displayKeyText)
-        val capsuleText = islandCapsuleText(displayKeyText, useNarrowFont)
+        // 摘要态保持紧凑，只显示关键码；价格仅在展开态展示。
+        val capsuleText = resultIslandCapsuleText(displayKeyText)
+        val resultTextInfo = JSONObject().apply {
+            put("title", capsuleText)
+            put("colorTitle", "#FFFFFF")      // 胶囊背景深，文字用白色
+            put("turnAnim", false)
+            put("narrowFont", RESULT_ISLAND_NARROW_FONT)
+            put("showHighlightColor", false)
+        }
         val imageTextInfoRight = JSONObject().apply {
             put("type", 2)  // 2 = 右边组件
-            put("textInfo", JSONObject().apply {
-                put("title", capsuleText)
-                put("colorTitle", "#FFFFFF")      // 胶囊背景深，文字用白色
-                put("turnAnim", false)
-                put("narrowFont", useNarrowFont)
-                put("showHighlightColor", false)
-            })
+            put("textInfo", resultTextInfo)
         }
         val bigIslandArea = if (statusOnly) {
-            // Xiaomi's image-text island keeps the icon and the two-line text in separate
-            // protocol components. Putting textInfo beside picInfo in the left component
-            // makes HyperOS silently discard both on some versions.
             JSONObject().apply {
+                // 与 MemoryIslandManager.NotificationBuilder 完全一致：type=7 的
+                // 系统 Lottie 图标同时作为根 picInfo 和左侧组件的 picInfo。
+                put("picInfo", islandPicSpec.toJson())
                 put("imageTextInfoLeft", JSONObject().apply {
                     put("type", 1)
-                    put("picInfo", JSONObject().apply {
-                        put("type", 1)
-                        put("pic", "miui.focus.pic_icon")
-                    })
+                    put("picInfo", islandPicSpec.toJson())
                 })
-                put("imageTextInfoRight", JSONObject().apply {
-                    put("type", 3)
-                    put("textInfo", JSONObject().apply {
-                        put("title", displayKeyText)
-                        put("content", content)
-                        put("colorTitle", "#FFFFFF")
-                        put("colorContent", "#B8B8B8")
-                        put("turnAnim", false)
-                        put("narrowFont", false)
-                        put("showHighlightColor", false)
-                    })
+                put("textInfo", JSONObject().apply {
+                    put("title", displayKeyText)
                 })
             }
         } else {
@@ -354,16 +400,27 @@ object SuperIslandManager : SessionNotificationManager {
         }
 
         val paramIsland = JSONObject().apply {
-            put("islandProperty", 1)
-            put("islandPriority", 2)
+            // Recognition is a temporary MemoryIsland-style record. Completed
+            // results are persistent records so HyperOS keeps them in the
+            // notification shade and does not let the next result delete them
+            // through ShowOnceIslandHandler.
+            put("islandProperty", islandPropertyFor(statusOnly))
+            put("islandPriority", if (statusOnly) 0 else 2)
             put("islandTimeout", islandTimeout)
-            put("dismissIsland", false)
-            put("expandedTime", expandedTime)
-            put("maxSize", false)
-            put("needCloseAnimation", true)
+            if (statusOnly) {
+                // Xiaomi memory island hard-codes this to 5s. It is the transition
+                // budget used by the one-shot island, not a request to open it.
+                put("expandedTime", 5)
+                put("highlightColor", RECOGNIZING_HIGHLIGHT_COLOR)
+            } else {
+                put("dismissIsland", false)
+                put("expandedTime", expandedTime)
+                put("maxSize", false)
+                put("needCloseAnimation", true)
+            }
             put("bigIslandArea", bigIslandArea)
             put("smallIslandArea", smallIslandArea)
-            if (dragShareContent.isNotBlank()) {
+            if (!statusOnly && dragShareContent.isNotBlank()) {
                 put("shareData", JSONObject().apply {
                     put("pic", "miui.focus.pic_icon")
                     put("title", dragShareTitle.ifBlank { title }.take(32))
@@ -376,18 +433,28 @@ object SuperIslandManager : SessionNotificationManager {
         // ── param_v2 ──
         val paramV2 = JSONObject().apply {
             put("protocol", 1)
+            // Both phases enter/continue as compact islands. The result can
+            // still be expanded by the user because its baseInfo/hintInfo are
+            // present; this flag only suppresses SystemUI's automatic first-float
+            // expansion when the result record is posted.
             put("enableFloat", true)
-            put("updatable", updatable)
-            put("ticker", ticker)
-            put("tickerPic", "miui.focus.pic_ticker")
-            if (SuperIslandSettingsStore.outerGlowEnabled) {
-                put("outEffectSrc", "outer_glow")
-            }
-            put("isShowNotification", true)
-            put("islandFirstFloat", true)
-            put("timeout", islandTimeout)
-            put("baseInfo", baseInfo)       // 商品名 + 同行规格标签 + 商家
-            if (!statusOnly) {
+            put("updatable", if (statusOnly) false else updatable)
+            put("islandFirstFloat", ISLAND_FIRST_FLOAT)
+
+            if (statusOnly) {
+                // property=0 的记忆岛只展示岛本身，不生成常规通知行；同时不带
+                // template-10 的 baseInfo，避免 SystemUI 把识别态解析成展开结果卡。
+                put("isShowNotification", false)
+                put("business", "memory")
+            } else {
+                put("ticker", ticker)
+                put("tickerPic", "miui.focus.pic_ticker")
+                if (SuperIslandSettingsStore.outerGlowEnabled) {
+                    put("outEffectSrc", "outer_glow")
+                }
+                put("isShowNotification", true)
+                put("timeout", islandTimeout)
+                put("baseInfo", baseInfo)       // 商品名 + 商家 + 展开态规格
                 put("picInfo", expandPicInfo)   // 右侧商家 Logo
                 put("hintInfo", hintInfo)       // 取餐码 + 价格标签 + 完成按钮
             }
@@ -401,7 +468,8 @@ object SuperIslandManager : SessionNotificationManager {
         AppLog.d(
             TAG,
             if (statusOnly) {
-                "Building single-area status island"
+                "Building recognizing island: " +
+                    "SystemUI Lottie key=$RECOGNIZING_SYSTEM_ICON_KEY"
             } else {
                 "Building template 10: protocol=1 baseInfo + hintInfo " +
                     "sourceIcon=${sourceIcon != null}"
@@ -411,7 +479,9 @@ object SuperIslandManager : SessionNotificationManager {
         // ── 组装 extras Bundle ──
         val extras = Bundle().apply {
             putString("miui.focus.param", param.toString())
-            putBundle("miui.focus.pics", pics)
+            // type=7 的 xiaoai_thinking 是 SystemUI 内置资源，原生小爱识别态
+            // 不挂 miui.focus.pics；结果态的 type=1 仍需要应用提供图片映射。
+            if (pics != null) putBundle("miui.focus.pics", pics)
             // 挂载原生 Action：HyperOS 通过 actionInfo.action key 引用，点击后直接触发 PendingIntent
             val actionsBundle = Bundle()
             // 下层文字按钮（已完成）
@@ -550,9 +620,17 @@ object SuperIslandManager : SessionNotificationManager {
         sessionId: Int,
         result: SessionNotificationResult,
         dismissIntent: PendingIntent,
+        publishDecision: ((notifId: Int, notif: Notification) -> ResultNotificationPublishDecision)?,
     ) {
         val content = result.details.ifBlank { result.title }.ifBlank { "无内容" }
-        sendResultIsland(context, sessionId, result, content, dismissIntent)
+        sendResultIsland(
+            context = context,
+            sessionId = sessionId,
+            result = result,
+            content = content,
+            dismissPendingIntent = dismissIntent,
+            publishDecision = publishDecision,
+        )
     }
 
     override fun transferForeground(
@@ -593,6 +671,7 @@ object SuperIslandManager : SessionNotificationManager {
         result: SessionNotificationResult,
         content: String,
         dismissPendingIntent: PendingIntent? = null,
+        publishDecision: ((notifId: Int, notif: Notification) -> ResultNotificationPublishDecision)? = null,
     ) {
         val islandId = islandIdForSession(sessionId)
         withBypass(context) {
@@ -664,8 +743,30 @@ object SuperIslandManager : SessionNotificationManager {
                 dragShareDescription = share.description.ifBlank { displayTitle },
                 dragShareContent = share.content.ifBlank { displayContent },
             )
-            nm.notify(islandId, notification)
-            AppLog.i(TAG, "Result island sent for session $sessionId (id=$islandId)")
+            // HyperOS reuses the old DynamicIslandContentView for an in-place
+            // update and copies its measured left/right widths into the new
+            // template. A normal cancel() cannot remove a notification that is
+            // currently the foreground-service anchor, so the service supplies
+            // a stopForeground(STOP_FOREGROUND_REMOVE) -> startForeground()
+            // callback for that case. Non-FGS/replayed records use the ordinary
+            // cancel -> notify fallback. Both paths keep the same notification ID.
+            val publishOutcome = when (publishDecision?.invoke(islandId, notification)) {
+                ResultNotificationPublishDecision.DROP -> {
+                    AppLog.d(TAG, "Dropping result for inactive session $sessionId")
+                    ResultNotificationPublishDecision.DROP
+                }
+                ResultNotificationPublishDecision.FOREGROUND_REPOSTED ->
+                    ResultNotificationPublishDecision.FOREGROUND_REPOSTED
+                ResultNotificationPublishDecision.NORMAL_REPOST,
+                null -> {
+                    nm.cancel(islandId)
+                    nm.notify(islandId, notification)
+                    ResultNotificationPublishDecision.NORMAL_REPOST
+                }
+            }
+            if (publishOutcome != ResultNotificationPublishDecision.DROP) {
+                AppLog.i(TAG, "Result island sent for session $sessionId (id=$islandId)")
+            }
         }
     }
 
@@ -687,20 +788,11 @@ object SuperIslandManager : SessionNotificationManager {
 
 }
 
-/** Xiaomi's narrow face supports numeric and Latin code text. */
-internal fun supportsNarrowFont(text: String): Boolean {
-    val compact = text.trim()
-    return compact.isNotEmpty() && compact.all {
-        it.isDigit() || it in 'A'..'Z' || it in 'a'..'z' || it in ".:-+/"
-    }
-}
-
 /**
- * HyperOS can clip the right overhang of the last condensed glyph. A trailing thin space
- * expands the measured slot without producing a visibly large gap.
+ * Result capsules always use HyperOS's condensed face. A trailing thin space expands the
+ * measured slot so the final condensed glyph is not clipped by SystemUI's right boundary.
  */
-internal fun islandCapsuleText(text: String, narrowFont: Boolean): String =
-    text.trimEnd() + if (narrowFont) "\u2009" else ""
+internal fun resultIslandCapsuleText(text: String): String = text.trimEnd() + "\u2009"
 
 internal data class IslandProductTexts(
     val title: String,
@@ -708,7 +800,24 @@ internal data class IslandProductTexts(
     val merchant: String,
 )
 
-/** Selects template 16's product title and two smaller secondary texts. */
+internal data class IslandDetailTagSpec(
+    val text: String,
+    val textColor: String,
+    val darkTextColor: String,
+    val backgroundColor: String,
+)
+
+internal fun islandDetailTagSpec(detail: String): IslandDetailTagSpec? =
+    detail.trim().takeIf(String::isNotEmpty)?.let {
+        IslandDetailTagSpec(
+            text = it,
+            textColor = "#2F80ED",
+            darkTextColor = "#79B8FF",
+            backgroundColor = "#182F80ED",
+        )
+    }
+
+/** Selects the expanded template's product title, detail tag and merchant line. */
 internal fun islandProductTexts(
     fallbackTitle: String,
     details: String,

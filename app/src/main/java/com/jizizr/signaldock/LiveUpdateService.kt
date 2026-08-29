@@ -9,6 +9,23 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
+ * Decide how a queued result should be published at execution time.
+ * Kept pure so the lifecycle branch can be regression-tested without mocking
+ * Android's Service and NotificationManager.
+ */
+internal fun resultNotificationPublishDecision(
+    isForeground: Boolean,
+    foregroundSessionId: Int,
+    notificationId: Int,
+    activeSession: Boolean,
+): ResultNotificationPublishDecision = when {
+    !activeSession -> ResultNotificationPublishDecision.DROP
+    isForeground && foregroundSessionId == notificationId ->
+        ResultNotificationPublishDecision.FOREGROUND_REPOSTED
+    else -> ResultNotificationPublishDecision.NORMAL_REPOST
+}
+
+/**
  * LiveUpdateService
  *
  * 前台服务，管理截图分析会话的通知生命周期。
@@ -56,6 +73,7 @@ class LiveUpdateService : Service() {
     private val foregroundLock = Any()
     @Volatile
     private var isForeground = false
+    @Volatile
     private var foregroundSessionId: Int = -1
 
     /** 根据设备能力懒加载一次，整个服务生命周期内不变 */
@@ -77,9 +95,12 @@ class LiveUpdateService : Service() {
                 val sessionId = intent.getIntExtra(EXTRA_SESSION_ID, -1)
                 if (sessionId != -1) {
                     AppLog.d(TAG, "Stopping session $sessionId")
+                    // Invalidate the session before cancelling its notification. A queued
+                    // result that reaches the publisher concurrently will then be dropped;
+                    // if it already published, the following cancellation removes it.
+                    activeSessions.remove(sessionId)
                     val releasedAutoLock = AutoPageNotificationLockStore.releaseBySession(sessionId)
                     provider.cancelForSession(this, sessionId)
-                    activeSessions.remove(sessionId)
                     SessionQrBitmapStore.remove(sessionId)
                     SourceIconCache.remove(sessionId)
                     releasedAutoLock?.let { lock ->
@@ -90,7 +111,9 @@ class LiveUpdateService : Service() {
                     if (activeSessions.isEmpty()) {
                         synchronized(foregroundLock) {
                             foregroundSessionId = -1
+                            isForeground = false
                         }
+                        stopForeground(Service.STOP_FOREGROUND_REMOVE)
                         stopSelf()
                     } else if (foregroundSessionId == notifId) {
                         val nextSession = activeSessions.keys().nextElement()
@@ -169,6 +192,39 @@ class LiveUpdateService : Service() {
                         hasQrBitmap = hasBitmap,
                     ),
                     makeDismissPendingIntent(sessionId),
+                    publishDecision = { notifId, notif ->
+                        synchronized(foregroundLock) {
+                            when (
+                                resultNotificationPublishDecision(
+                                    isForeground = isForeground,
+                                    foregroundSessionId = foregroundSessionId,
+                                    notificationId = notifId,
+                                    activeSession = activeSessions.containsKey(sessionId),
+                                )
+                            ) {
+                                ResultNotificationPublishDecision.DROP -> {
+                                    AppLog.d(TAG, "Dropping queued result for inactive session $sessionId")
+                                    ResultNotificationPublishDecision.DROP
+                                }
+                                ResultNotificationPublishDecision.NORMAL_REPOST ->
+                                    ResultNotificationPublishDecision.NORMAL_REPOST
+                                ResultNotificationPublishDecision.FOREGROUND_REPOSTED -> {
+                                    // NotificationManager.cancel() is not allowed to
+                                    // remove the notification anchoring this FGS. Use
+                                    // the Service API so SystemUI receives a genuinely
+                                    // new record and remeasures the compact island.
+                                    stopForeground(Service.STOP_FOREGROUND_REMOVE)
+                                    startForeground(
+                                        notifId,
+                                        notif,
+                                        ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE,
+                                    )
+                                    isForeground = true
+                                    ResultNotificationPublishDecision.FOREGROUND_REPOSTED
+                                }
+                            }
+                        }
+                    },
                 )
                 intent.getStringExtra(EXTRA_AUTO_PROFILE_ID)
                     ?.takeIf(String::isNotBlank)

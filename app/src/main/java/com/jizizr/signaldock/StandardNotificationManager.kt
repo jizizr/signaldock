@@ -38,6 +38,7 @@ object StandardNotificationManager : SessionNotificationManager {
         sessionId: Int,
         result: SessionNotificationResult,
         dismissIntent: PendingIntent,
+        publishDecision: ((notifId: Int, notif: Notification) -> ResultNotificationPublishDecision)?,
     ) {
         context.getSystemService(NotificationManager::class.java)
             .notify(sessionId, buildResultNotif(context, sessionId, result, dismissIntent))
