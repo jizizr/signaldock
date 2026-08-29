@@ -29,6 +29,11 @@ val sourceWindowDiagnostics = providers.gradleProperty("sourceWindowDiagnostics"
 val autoPageDiagnostics = providers.gradleProperty("autoPageDiagnostics")
     .map(String::toBoolean)
     .orElse(false)
+// Keep Debug builds isolated by default; rooted-device validation can opt into
+// the production package without changing the normal developer workflow.
+val debugUsesProductionPackage = providers.gradleProperty("debugUsesProductionPackage")
+    .map(String::toBoolean)
+    .orElse(false)
 val defaultSdkDir = when {
     System.getProperty("os.name").startsWith("Mac", ignoreCase = true) ->
         "${System.getProperty("user.home")}/Library/Android/sdk"
@@ -170,7 +175,9 @@ android {
 
     buildTypes {
         debug {
-            applicationIdSuffix = ".debug"
+            if (!debugUsesProductionPackage.get()) {
+                applicationIdSuffix = ".debug"
+            }
         }
         release {
             isMinifyEnabled = true
