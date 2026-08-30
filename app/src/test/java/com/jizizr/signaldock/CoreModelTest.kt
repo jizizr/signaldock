@@ -263,7 +263,7 @@ class CoreModelTest {
     @Test
     fun recognizingIsland_startsCompactInsteadOfFirstFloat() {
         assertFalse(ISLAND_FIRST_FLOAT)
-        assertEquals("记忆中", RECOGNIZING_SUMMARY_TEXT)
+        assertEquals("识别中", RECOGNIZING_SUMMARY_TEXT)
     }
 
     @Test

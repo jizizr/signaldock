@@ -25,7 +25,7 @@ internal const val RECOGNIZING_ISLAND_PROPERTY = 0
 internal const val RESULT_ISLAND_PROPERTY = 1
 internal const val ISLAND_FIRST_FLOAT = false
 internal const val RESULT_ISLAND_FIRST_FLOAT = true
-internal const val RECOGNIZING_SUMMARY_TEXT = "记忆中"
+internal const val RECOGNIZING_SUMMARY_TEXT = "识别中"
 
 internal data class IslandPicSpec(
     val type: Int,
