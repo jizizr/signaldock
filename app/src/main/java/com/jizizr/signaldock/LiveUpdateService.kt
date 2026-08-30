@@ -1,6 +1,5 @@
 ﻿package com.jizizr.signaldock
 
-import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
@@ -17,16 +16,11 @@ import java.util.concurrent.atomic.AtomicInteger
 internal fun resultNotificationPublishDecision(
     isForeground: Boolean,
     foregroundSessionId: Int,
-    recognitionNotificationId: Int,
     notificationId: Int,
     activeSession: Boolean,
 ): ResultNotificationPublishDecision = when {
     !activeSession -> ResultNotificationPublishDecision.DROP
-    // A separate result key lets SystemUI create a clean holder instead of
-    // carrying recognition dimensions and expanded-template state forward.
-    isForeground && recognitionNotificationId != notificationId &&
-        (foregroundSessionId == recognitionNotificationId ||
-            foregroundSessionId == notificationId) ->
+    isForeground && foregroundSessionId == notificationId ->
         ResultNotificationPublishDecision.FOREGROUND_REPOSTED
     else -> ResultNotificationPublishDecision.NORMAL_REPOST
 }
@@ -62,7 +56,7 @@ class LiveUpdateService : Service() {
         const val EXTRA_AUTO_PROFILE_ID = "extra_auto_profile_id"
 
         private const val MIN_SESSION_ID = 2000
-        private const val MAX_SESSION_ID = Int.MAX_VALUE - 10000
+        private const val MAX_SESSION_ID = Int.MAX_VALUE - 4000
         private val sessionCounter = AtomicInteger(
             (System.currentTimeMillis() % 1_000_000_000L)
                 .toInt()
@@ -114,7 +108,6 @@ class LiveUpdateService : Service() {
                             ?.onAutoNotificationReleased(lock.profileId, lock.notificationId)
                     }
                     val notifId = provider.notificationIdForSession(sessionId)
-                    val recognitionNotifId = provider.recognitionNotificationIdForSession(sessionId)
                     if (activeSessions.isEmpty()) {
                         synchronized(foregroundLock) {
                             foregroundSessionId = -1
@@ -122,7 +115,7 @@ class LiveUpdateService : Service() {
                         }
                         stopForeground(Service.STOP_FOREGROUND_REMOVE)
                         stopSelf()
-                    } else if (foregroundSessionId == notifId || foregroundSessionId == recognitionNotifId) {
+                    } else if (foregroundSessionId == notifId) {
                         val nextSession = activeSessions.keys().nextElement()
                         synchronized(foregroundLock) {
                             foregroundSessionId = -1
@@ -205,8 +198,6 @@ class LiveUpdateService : Service() {
                                 resultNotificationPublishDecision(
                                     isForeground = isForeground,
                                     foregroundSessionId = foregroundSessionId,
-                                    recognitionNotificationId = provider
-                                        .recognitionNotificationIdForSession(sessionId),
                                     notificationId = notifId,
                                     activeSession = activeSessions.containsKey(sessionId),
                                 )
@@ -218,19 +209,16 @@ class LiveUpdateService : Service() {
                                 ResultNotificationPublishDecision.NORMAL_REPOST ->
                                     ResultNotificationPublishDecision.NORMAL_REPOST
                                 ResultNotificationPublishDecision.FOREGROUND_REPOSTED -> {
-                                    // Enqueue the new key before switching the FGS anchor.
-                                    // Android removes the previous anchor while handling
-                                    // startForeground(newId), so this ordering guarantees
-                                    // SystemUI already has the visually equivalent new
-                                    // island and never sees an empty frame.
-                                    getSystemService(NotificationManager::class.java)
-                                        .notify(notifId, notif)
+                                    // NotificationManager.cancel() is not allowed to
+                                    // remove the notification anchoring this FGS. Use
+                                    // the Service API so SystemUI receives a genuinely
+                                    // new record and remeasures the compact island.
+                                    stopForeground(Service.STOP_FOREGROUND_REMOVE)
                                     startForeground(
                                         notifId,
                                         notif,
                                         ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE,
                                     )
-                                    foregroundSessionId = notifId
                                     isForeground = true
                                     ResultNotificationPublishDecision.FOREGROUND_REPOSTED
                                 }
