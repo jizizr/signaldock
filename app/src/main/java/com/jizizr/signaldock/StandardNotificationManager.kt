@@ -23,6 +23,8 @@ object StandardNotificationManager : SessionNotificationManager {
 
     override fun notificationIdForSession(sessionId: Int): Int = sessionId
 
+    override fun recognitionNotificationIdForSession(sessionId: Int): Int = sessionId
+
     override fun sendRecognizingNotification(
         context: Context,
         sessionId: Int,

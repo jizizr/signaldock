@@ -240,10 +240,12 @@ class CoreModelTest {
     }
 
     @Test
-    fun resultIslandCapsule_alwaysUsesNarrowFontAndMeasurementPadding() {
-        assertTrue(RESULT_ISLAND_NARROW_FONT)
-        assertEquals("35060\u2009", resultIslandCapsuleText("35060"))
-        assertEquals("取餐码 35060\u2009", resultIslandCapsuleText("取餐码 35060  "))
+    fun resultIslandCapsule_usesHistoricalNarrowFontGateAndThinSpace() {
+        assertTrue(supportsNarrowFont("35060"))
+        assertTrue(supportsNarrowFont("AB-35060"))
+        assertFalse(supportsNarrowFont("取餐码 35060"))
+        assertEquals("35060\u2009", islandCapsuleText("35060", true))
+        assertEquals("取餐码 35060", islandCapsuleText("取餐码 35060  ", false))
     }
 
     @Test
@@ -261,6 +263,17 @@ class CoreModelTest {
     @Test
     fun recognizingIsland_startsCompactInsteadOfFirstFloat() {
         assertFalse(ISLAND_FIRST_FLOAT)
+        assertEquals("记忆中", RECOGNIZING_SUMMARY_TEXT)
+    }
+
+    @Test
+    fun islandSession_usesFreshResultKeyAfterRecognition() {
+        assertEquals(8123, SuperIslandManager.recognitionNotificationIdForSession(8123))
+        assertEquals(11123, SuperIslandManager.notificationIdForSession(8123))
+        assertTrue(
+            SuperIslandManager.notificationIdForSession(8123) !=
+                SuperIslandManager.recognitionNotificationIdForSession(8123),
+        )
     }
 
     @Test
@@ -273,10 +286,11 @@ class CoreModelTest {
     @Test
     fun resultRepost_decidesAtExecutionTimeForCurrentSession() {
         assertEquals(
-            ResultNotificationPublishDecision.FOREGROUND_REPOSTED,
+            ResultNotificationPublishDecision.NORMAL_REPOST,
             resultNotificationPublishDecision(
                 isForeground = true,
                 foregroundSessionId = 7003,
+                recognitionNotificationId = 7003,
                 notificationId = 7003,
                 activeSession = true,
             ),
@@ -286,6 +300,7 @@ class CoreModelTest {
             resultNotificationPublishDecision(
                 isForeground = true,
                 foregroundSessionId = 7003,
+                recognitionNotificationId = 7002,
                 notificationId = 7004,
                 activeSession = true,
             ),
@@ -295,6 +310,7 @@ class CoreModelTest {
             resultNotificationPublishDecision(
                 isForeground = false,
                 foregroundSessionId = 7003,
+                recognitionNotificationId = 7003,
                 notificationId = 7003,
                 activeSession = true,
             ),
@@ -304,8 +320,23 @@ class CoreModelTest {
             resultNotificationPublishDecision(
                 isForeground = true,
                 foregroundSessionId = 7003,
+                recognitionNotificationId = 7003,
                 notificationId = 7003,
                 activeSession = false,
+            ),
+        )
+    }
+
+    @Test
+    fun resultPublish_restartsForegroundWhenRecognitionUsesASeparateId() {
+        assertEquals(
+            ResultNotificationPublishDecision.FOREGROUND_REPOSTED,
+            resultNotificationPublishDecision(
+                isForeground = true,
+                foregroundSessionId = 5003,
+                recognitionNotificationId = 5003,
+                notificationId = 8003,
+                activeSession = true,
             ),
         )
     }

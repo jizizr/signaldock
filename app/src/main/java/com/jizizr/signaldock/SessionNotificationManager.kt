@@ -36,8 +36,11 @@ enum class ResultNotificationPublishDecision {
  */
 interface SessionNotificationManager {
 
-    /** 将 session ID 映射为实际通知 ID */
+    /** 将 session ID 映射为完成后的持久结果通知 ID。 */
     fun notificationIdForSession(sessionId: Int): Int
+
+    /** 将 session ID 映射为识别阶段的临时通知 ID。 */
+    fun recognitionNotificationIdForSession(sessionId: Int): Int
 
     /**
      * 发送"识别中"通知，并在通知就绪时回调 [onForegroundReady]。
@@ -57,8 +60,9 @@ interface SessionNotificationManager {
      * 发送/更新结果通知（允许异步）。
      *
      * [publishDecision] 由需要在真正投递结果时判断通知生命周期的提供器调用。
-     * 它可以丢弃已结束的会话、执行普通 cancel → notify，或由前台服务完成
-     * stopForeground → startForeground。标准通知提供器不需要使用它。
+     * 它可以丢弃已结束的会话、执行普通 notify，或由前台服务切换到新的
+     * 结果通知 ID。结果岛可以与识别岛使用不同的通知 ID，以便 SystemUI
+     * 重新创建模板；标准通知提供器不需要使用它。
      */
     fun sendResultNotification(
         context: Context,

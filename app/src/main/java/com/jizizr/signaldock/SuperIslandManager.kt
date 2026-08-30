@@ -24,7 +24,8 @@ internal const val RECOGNIZING_SYSTEM_ICON_TYPE = 7
 internal const val RECOGNIZING_ISLAND_PROPERTY = 0
 internal const val RESULT_ISLAND_PROPERTY = 1
 internal const val ISLAND_FIRST_FLOAT = false
-internal const val RESULT_ISLAND_NARROW_FONT = true
+internal const val RESULT_ISLAND_FIRST_FLOAT = true
+internal const val RECOGNIZING_SUMMARY_TEXT = "记忆中"
 
 internal data class IslandPicSpec(
     val type: Int,
@@ -75,6 +76,15 @@ object SuperIslandManager : SessionNotificationManager {
     private const val ISLAND_NOTIFICATION_ID = 9001
     private const val MAX_TEST_NOTIFICATION_ID = 9999
     private const val RECOGNIZING_HIGHLIGHT_COLOR = "#3482FF"
+    /** Keep result IDs disjoint from the temporary recognition records. */
+    private const val SESSION_NOTIFICATION_OFFSET = 3000
+    private const val RECOGNIZING_ISLAND_TIMEOUT = 120
+    /** Give SystemUI time to inflate the result title before enabling its condensed face. */
+    private const val NARROW_FONT_REBIND_DELAY_MS = 120L
+    /** Let the morph finish, then synchronize SystemUI's real and fake compact holders. */
+    private const val RESULT_LAYOUT_SETTLE_DELAY_MS = 450L
+    /** property=1 uses 3600 s when islandTimeout is zero; make that explicit. */
+    private const val RESULT_ISLAND_TIMEOUT = 3600
 
     /**
      * xmsf 网络盲窗时长（ms），保持 disable 状态足够久，
@@ -218,6 +228,14 @@ object SuperIslandManager : SessionNotificationManager {
         }
     }
 
+    private fun sleepForTransition(delayMs: Long) {
+        try {
+            Thread.sleep(delayMs)
+        } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
+        }
+    }
+
     // ── 构建超级岛通知 ──────────────────────────────────────
 
     /**
@@ -263,16 +281,20 @@ object SuperIslandManager : SessionNotificationManager {
         dragShareTitle: String = "",
         dragShareDescription: String = "",
         dragShareContent: String = "",
+        capsuleNarrowFontOverride: Boolean? = null,
+        suppressInitialFloat: Boolean = false,
+        primeResultHolder: Boolean = false,
         statusOnly: Boolean = false,
     ): Notification {
         ensureChannels(context)
-        val islandPicSpec = if (statusOnly) {
+        val memoryFrame = statusOnly || primeResultHolder
+        val islandPicSpec = if (memoryFrame) {
             recognizingIslandPicSpec()
         } else {
             IslandPicSpec(type = 1, key = "miui.focus.pic_icon")
         }
         // 识别态使用 SystemUI 内置的 Lottie key，不需要创建或序列化应用图标。
-        val pics = if (statusOnly) {
+        val pics = if (memoryFrame) {
             null
         } else {
             val appIcon = sourceIcon ?: Icon.createWithResource(context, R.mipmap.ic_launcher)
@@ -289,15 +311,27 @@ object SuperIslandManager : SessionNotificationManager {
         val displayPrice = price.trim().take(8)
         val baseInfo = JSONObject().apply {
             put("type", 2)
-            put("title", if (statusOnly) displayKeyText else productText.title)
-            put("content", if (statusOnly) content else productText.merchant)
+            put(
+                "title",
+                when {
+                    memoryFrame -> RECOGNIZING_SUMMARY_TEXT
+                    else -> productText.title
+                },
+            )
+            put(
+                "content",
+                when {
+                    memoryFrame -> RECOGNIZING_SUMMARY_TEXT
+                    else -> productText.merchant
+                },
+            )
             put("colorTitle", "#000000")
             put("colorTitleDark", "#FFFFFF")
             put("colorContent", "#666666")
             put("colorContentDark", "#B8B8B8")
             put("showDivider", false)
             put("showContentDivider", false)
-            if (!statusOnly) {
+            if (!memoryFrame) {
                 islandDetailTagSpec(productText.detail)?.let { tag ->
                     // specialTitle is HyperOS's dedicated title-side tag. The compact
                     // Dynamic Island reads only param_island.bigIslandArea, so keeping
@@ -322,16 +356,16 @@ object SuperIslandManager : SessionNotificationManager {
         // ── 展开态：按钮组件3 (hintInfo) ──
         val hintInfo = JSONObject().apply {
             put("type", 1)
-            put("title", displayKeyText)
+            put("title", if (memoryFrame) RECOGNIZING_SUMMARY_TEXT else displayKeyText)
             put("colorTitle", "#000000")
             put("colorTitleDark", "#FFFFFF")
-            if (displayPrice.isNotBlank()) {
+            if (!memoryFrame && displayPrice.isNotBlank()) {
                 put("content", displayPrice)
                 put("colorContent", "#D94B30")
                 put("colorContentDark", "#FF9B82")
                 put("colorContentBg", "#18E85D3F")
             }
-            if (actionTitle.isNotBlank() && actionPendingIntent != null) {
+            if (!memoryFrame && actionTitle.isNotBlank() && actionPendingIntent != null) {
                 put("actionInfo", JSONObject().apply {
                     put("action", actionKey1)
                     put("actionTitle", actionTitle)
@@ -355,61 +389,50 @@ object SuperIslandManager : SessionNotificationManager {
             put("picInfo", smallPicInfo)
         }
 
-        // 大岛（摘要态胶囊）：左侧圆形图标，右侧关键文字。
-        //
-        // 识别态不能复用结果岛的 template-10 结构。超级小爱“记忆中”使用
-        // islandProperty=0 的一次性岛协议：bigIslandArea 是
-        //   picInfo + imageTextInfoLeft + textInfo
-        // 而不是结果岛的 imageTextInfoLeft + imageTextInfoRight。后者会让
-        // SystemUI 在首次发布时直接走可展开的大岛路径。
+        // 大岛（摘要态胶囊）：识别态和结果态保持同一组模块类型。
         val imageTextInfoLeft = JSONObject().apply {
             put("type", 1)  // 1 = 左边组件
-            put("picInfo", islandPicSpec.toJson())
+            put("picInfo", JSONObject().apply {
+                if (memoryFrame) {
+                    put("type", islandPicSpec.type)
+                    put("pic", islandPicSpec.key)
+                    islandPicSpec.autoplay?.let { put("autoplay", it) }
+                } else {
+                    put("type", 1)
+                    put("pic", "miui.focus.pic_icon")
+                }
+            })
         }
-        // 摘要态保持紧凑，只显示关键码；价格仅在展开态展示。
-        val capsuleText = resultIslandCapsuleText(displayKeyText)
-        val resultTextInfo = JSONObject().apply {
-            put("title", capsuleText)
-            put("colorTitle", "#FFFFFF")      // 胶囊背景深，文字用白色
-            put("turnAnim", false)
-            put("narrowFont", RESULT_ISLAND_NARROW_FONT)
-            put("showHighlightColor", false)
+        val useNarrowFont = !memoryFrame &&
+            (capsuleNarrowFontOverride ?: supportsNarrowFont(displayKeyText))
+        val capsuleText = if (memoryFrame) {
+            RECOGNIZING_SUMMARY_TEXT
+        } else {
+            islandCapsuleText(displayKeyText, useNarrowFont)
         }
         val imageTextInfoRight = JSONObject().apply {
             put("type", 2)  // 2 = 右边组件
-            put("textInfo", resultTextInfo)
+            put("textInfo", JSONObject().apply {
+                put("title", capsuleText)
+                put("colorTitle", "#FFFFFF")
+                put("turnAnim", false)
+                put("narrowFont", useNarrowFont)
+                put("showHighlightColor", false)
+            })
         }
-        val bigIslandArea = if (statusOnly) {
-            JSONObject().apply {
-                // 与 MemoryIslandManager.NotificationBuilder 完全一致：type=7 的
-                // 系统 Lottie 图标同时作为根 picInfo 和左侧组件的 picInfo。
-                put("picInfo", islandPicSpec.toJson())
-                put("imageTextInfoLeft", JSONObject().apply {
-                    put("type", 1)
-                    put("picInfo", islandPicSpec.toJson())
-                })
-                put("textInfo", JSONObject().apply {
-                    put("title", displayKeyText)
-                })
-            }
-        } else {
-            JSONObject().apply {
-                put("imageTextInfoLeft", imageTextInfoLeft)
-                put("imageTextInfoRight", imageTextInfoRight)
-            }
+        val bigIslandArea = JSONObject().apply {
+            put("imageTextInfoLeft", imageTextInfoLeft)
+            put("imageTextInfoRight", imageTextInfoRight)
         }
 
         val paramIsland = JSONObject().apply {
-            // Recognition is a temporary MemoryIsland-style record. Completed
-            // results are persistent records so HyperOS keeps them in the
-            // notification shade and does not let the next result delete them
-            // through ShowOnceIslandHandler.
-            put("islandProperty", islandPropertyFor(statusOnly))
-            put("islandPriority", if (statusOnly) 0 else 2)
+            // Recognition remains a property-0 MemoryIsland-style island so it
+            // is not copied into the notification shade. The result switches
+            // to property 1 and is the persistent record for this session.
+            put("islandProperty", islandPropertyFor(memoryFrame))
+            put("islandPriority", if (memoryFrame) 0 else 2)
             put("islandTimeout", islandTimeout)
-            if (statusOnly) {
-                // Xiaomi memory island hard-codes this to 5s. It is the transition
-                // budget used by the one-shot island, not a request to open it.
+            if (memoryFrame) {
                 put("expandedTime", 5)
                 put("highlightColor", RECOGNIZING_HIGHLIGHT_COLOR)
             } else {
@@ -420,7 +443,7 @@ object SuperIslandManager : SessionNotificationManager {
             }
             put("bigIslandArea", bigIslandArea)
             put("smallIslandArea", smallIslandArea)
-            if (!statusOnly && dragShareContent.isNotBlank()) {
+            if (!memoryFrame && dragShareContent.isNotBlank()) {
                 put("shareData", JSONObject().apply {
                     put("pic", "miui.focus.pic_icon")
                     put("title", dragShareTitle.ifBlank { title }.take(32))
@@ -433,19 +456,22 @@ object SuperIslandManager : SessionNotificationManager {
         // ── param_v2 ──
         val paramV2 = JSONObject().apply {
             put("protocol", 1)
-            // Both phases enter/continue as compact islands. The result can
-            // still be expanded by the user because its baseInfo/hintInfo are
-            // present; this flag only suppresses SystemUI's automatic first-float
-            // expansion when the result record is posted.
             put("enableFloat", true)
-            put("updatable", if (statusOnly) false else updatable)
-            put("islandFirstFloat", ISLAND_FIRST_FLOAT)
+            // Keep both records updatable while they are active. Recognition
+            // and result use separate keys, but each may receive a lifecycle
+            // refresh from the foreground service or SystemUI.
+            put("updatable", updatable)
+            put(
+                "islandFirstFloat",
+                if (memoryFrame || suppressInitialFloat) ISLAND_FIRST_FLOAT else RESULT_ISLAND_FIRST_FLOAT,
+            )
 
-            if (statusOnly) {
-                // property=0 的记忆岛只展示岛本身，不生成常规通知行；同时不带
-                // template-10 的 baseInfo，避免 SystemUI 把识别态解析成展开结果卡。
+            if (memoryFrame) {
+                // Both recognition and the result's hand-off frame use the
+                // property-0 MemoryIsland path, keeping the hand-off compact.
                 put("isShowNotification", false)
                 put("business", "memory")
+                put("reopen", "reopen")
             } else {
                 put("ticker", ticker)
                 put("tickerPic", "miui.focus.pic_ticker")
@@ -467,8 +493,8 @@ object SuperIslandManager : SessionNotificationManager {
 
         AppLog.d(
             TAG,
-            if (statusOnly) {
-                "Building recognizing island: " +
+            if (memoryFrame) {
+                "Building memory island frame: " +
                     "SystemUI Lottie key=$RECOGNIZING_SYSTEM_ICON_KEY"
             } else {
                 "Building template 10: protocol=1 baseInfo + hintInfo " +
@@ -479,13 +505,22 @@ object SuperIslandManager : SessionNotificationManager {
         // ── 组装 extras Bundle ──
         val extras = Bundle().apply {
             putString("miui.focus.param", param.toString())
+            if (memoryFrame || suppressInitialFloat) {
+                // FocusNotificationController consumes this flag when the
+                // notification is posted and therefore skips the initial expanded
+                // animation. Besides matching the three-finger recognition path,
+                // this keeps the narrow-font priming update out of SystemUI's fake
+                // expanded holder, where an interrupted transition can leave the
+                // detail tag drawn over the collapsed capsule.
+                putBoolean("miui.island.updateNoFloat", true)
+            }
             // type=7 的 xiaoai_thinking 是 SystemUI 内置资源，原生小爱识别态
             // 不挂 miui.focus.pics；结果态的 type=1 仍需要应用提供图片映射。
             if (pics != null) putBundle("miui.focus.pics", pics)
             // 挂载原生 Action：HyperOS 通过 actionInfo.action key 引用，点击后直接触发 PendingIntent
             val actionsBundle = Bundle()
             // 下层文字按钮（已完成）
-            if (actionPendingIntent != null && actionTitle.isNotBlank()) {
+            if (!memoryFrame && actionPendingIntent != null && actionTitle.isNotBlank()) {
                 actionsBundle.putParcelable(
                     actionKey1,
                     Notification.Action.Builder(
@@ -543,7 +578,9 @@ object SuperIslandManager : SessionNotificationManager {
                 val notificationManager = context.getSystemService(NotificationManager::class.java)
                 lastTestNotificationId.getAndSet(notificationId)
                     .takeIf { it != -1 && it != notificationId }
-                    ?.let(notificationManager::cancel)
+                    ?.let { previousId ->
+                        notificationManager.cancel(previousId)
+                    }
                 val notification = buildIslandNotification(
                     context = context,
                     title = "信岛测试",
@@ -572,7 +609,12 @@ object SuperIslandManager : SessionNotificationManager {
 
     // ── SessionNotificationManager overrides ────────────────────────────────
 
-    override fun notificationIdForSession(sessionId: Int): Int = sessionId + 3000
+    override fun notificationIdForSession(sessionId: Int): Int =
+        sessionId + SESSION_NOTIFICATION_OFFSET
+
+    override fun recognitionNotificationIdForSession(sessionId: Int): Int =
+        sessionId
+
     fun islandIdForSession(sessionId: Int): Int = notificationIdForSession(sessionId)
 
     /**
@@ -584,7 +626,7 @@ object SuperIslandManager : SessionNotificationManager {
         sessionId: Int,
         onForegroundReady: (notifId: Int, notif: Notification) -> Unit,
     ) {
-        val islandId = notificationIdForSession(sessionId)
+        val islandId = recognitionNotificationIdForSession(sessionId)
         val dismissPI = PendingIntent.getService(
             context, sessionId,
             Intent(context, LiveUpdateService::class.java).apply {
@@ -597,13 +639,13 @@ object SuperIslandManager : SessionNotificationManager {
             val nm = context.getSystemService(NotificationManager::class.java)
             val notification = buildIslandNotification(
                 context = context,
-                title = "识别中",
-                content = "正在分析截图",
+                title = RECOGNIZING_SUMMARY_TEXT,
+                content = RECOGNIZING_SUMMARY_TEXT,
                 ticker = "识别中",
                 keyText = "识别中",
                 ongoing = false,
                 updatable = true,
-                islandTimeout = 120,
+                islandTimeout = RECOGNIZING_ISLAND_TIMEOUT,
                 expandedTime = 0,
                 deleteIntent = dismissPI,
                 sourceIcon = SourceIconCache.iconFor(sessionId),
@@ -638,18 +680,24 @@ object SuperIslandManager : SessionNotificationManager {
         sessionId: Int,
         onReady: (notifId: Int, notif: Notification) -> Unit,
     ) {
-        val notifId = notificationIdForSession(sessionId)
+        val notificationIds = listOf(
+            recognitionNotificationIdForSession(sessionId),
+            notificationIdForSession(sessionId),
+        )
         withBypass(context) {
             val nm = context.getSystemService(NotificationManager::class.java)
-            val existing = nm.activeNotifications.firstOrNull { it.id == notifId }?.notification
+            val existing = nm.activeNotifications.firstOrNull { it.id in notificationIds }
                 ?: return@withBypass
-            onReady(notifId, existing)
+            onReady(existing.id, existing.notification)
         }
     }
 
     override fun cancelForSession(context: Context, sessionId: Int) {
-        context.getSystemService(NotificationManager::class.java)
-            .cancel(notificationIdForSession(sessionId))
+        val nm = context.getSystemService(NotificationManager::class.java)
+        listOf(
+            recognitionNotificationIdForSession(sessionId),
+            notificationIdForSession(sessionId),
+        ).distinct().forEach(nm::cancel)
     }
 
     override fun onServiceDestroy(context: Context) {
@@ -674,6 +722,7 @@ object SuperIslandManager : SessionNotificationManager {
         publishDecision: ((notifId: Int, notif: Notification) -> ResultNotificationPublishDecision)? = null,
     ) {
         val islandId = islandIdForSession(sessionId)
+        val recognitionIslandId = recognitionNotificationIdForSession(sessionId)
         withBypass(context) {
             val displayTitle = result.title.ifBlank { "截图分析" }
             val displayContent = content.ifBlank { "无内容" }
@@ -715,42 +764,65 @@ object SuperIslandManager : SessionNotificationManager {
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
             )
 
-            val notification = buildIslandNotification(
-                context = context,
-                title = displayTitle,
-                content = displayContent,
-                ticker = "信岛 · $displayTitle",
-                keyText = displayTitle,   // 取餐码/识别结果关键信息始终在 hintInfo.title 展示
-                price = result.price,
-                itemTitle = result.item,
-                itemSubtitle = result.itemDetail,
-                merchant = result.merchant,
-                ongoing = true,
-                updatable = true,
-                islandTimeout = 300,
-                actionTitle = result.actionText.ifBlank { "已完成" },
-                actionPendingIntent = dismissPendingIntent,
-                // 普通点击始终进入来源应用；有二维码时，向下拖动由系统将同一 Activity
-                // 转成二维码小窗。点击能力不能依赖二维码是否存在。
-                contentPendingIntent = islandActivity,
-                deleteIntent = dismissPendingIntent,
-                sourceIcon = SourceIconCache.iconFor(sessionId),
-                dragShareTitle = share.title.ifBlank {
-                    result.merchant.ifBlank {
-                    result.item.ifBlank { result.label.ifBlank { "取餐信息" } }
-                    }
-                },
-                dragShareDescription = share.description.ifBlank { displayTitle },
-                dragShareContent = share.content.ifBlank { displayContent },
+            fun buildResultNotification(
+                narrowFontOverride: Boolean?,
+                suppressInitialFloat: Boolean = false,
+                primeResultHolder: Boolean = false,
+            ): Notification =
+                buildIslandNotification(
+                    context = context,
+                    title = displayTitle,
+                    content = displayContent,
+                    ticker = "信岛 · $displayTitle",
+                    keyText = displayTitle,
+                    price = result.price,
+                    itemTitle = result.item,
+                    itemSubtitle = result.itemDetail,
+                    merchant = result.merchant,
+                    ongoing = true,
+                    updatable = true,
+                    islandTimeout = RESULT_ISLAND_TIMEOUT,
+                    actionTitle = result.actionText.ifBlank { "已完成" },
+                    actionPendingIntent = dismissPendingIntent,
+                    // 普通点击始终进入来源应用；有二维码时，向下拖动由系统将同一 Activity
+                    // 转成二维码小窗。点击能力不能依赖二维码是否存在。
+                    contentPendingIntent = islandActivity,
+                    deleteIntent = dismissPendingIntent,
+                    sourceIcon = SourceIconCache.iconFor(sessionId),
+                    dragShareTitle = share.title.ifBlank {
+                        result.merchant.ifBlank {
+                            result.item.ifBlank { result.label.ifBlank { "取餐信息" } }
+                        }
+                    },
+                    dragShareDescription = share.description.ifBlank { displayTitle },
+                    dragShareContent = share.content.ifBlank { displayContent },
+                    capsuleNarrowFontOverride = narrowFontOverride,
+                    suppressInitialFloat = suppressInitialFloat,
+                    primeResultHolder = primeResultHolder,
+                )
+
+            val needsNarrowFontRebind = supportsNarrowFont(displayTitle)
+            // Result replacement must stay compact for the whole transition.
+            // The prime already uses updateNoFloat; the final payload needs the
+            // same flag or HyperOS expands it as a newly posted property-1 island.
+            val notification = buildResultNotification(
+                narrowFontOverride = null,
+                suppressInitialFloat = true,
             )
-            // HyperOS reuses the old DynamicIslandContentView for an in-place
-            // update and copies its measured left/right widths into the new
-            // template. A normal cancel() cannot remove a notification that is
-            // currently the foreground-service anchor, so the service supplies
-            // a stopForeground(STOP_FOREGROUND_REMOVE) -> startForeground()
-            // callback for that case. Non-FGS/replayed records use the ordinary
-            // cancel -> notify fallback. Both paths keep the same notification ID.
-            val publishOutcome = when (publishDecision?.invoke(islandId, notification)) {
+            val initialNotification = if (needsNarrowFontRebind) {
+                // This is a new notification key, but its first compact frame is
+                // intentionally indistinguishable from the old recognition island.
+                // That lets SystemUI inflate the result title while narrowFont=false
+                // without exposing the code, product tag, or expanded result card.
+                buildResultNotification(
+                    narrowFontOverride = false,
+                    suppressInitialFloat = true,
+                    primeResultHolder = true,
+                )
+            } else {
+                notification
+            }
+            val publishOutcome = when (publishDecision?.invoke(islandId, initialNotification)) {
                 ResultNotificationPublishDecision.DROP -> {
                     AppLog.d(TAG, "Dropping result for inactive session $sessionId")
                     ResultNotificationPublishDecision.DROP
@@ -759,12 +831,34 @@ object SuperIslandManager : SessionNotificationManager {
                     ResultNotificationPublishDecision.FOREGROUND_REPOSTED
                 ResultNotificationPublishDecision.NORMAL_REPOST,
                 null -> {
+            // The result has its own key. Publish its hand-off frame before
+            // removing recognition so SystemUI can transition without a gap.
                     nm.cancel(islandId)
-                    nm.notify(islandId, notification)
+                    nm.notify(islandId, initialNotification)
                     ResultNotificationPublishDecision.NORMAL_REPOST
                 }
             }
             if (publishOutcome != ResultNotificationPublishDecision.DROP) {
+                if (recognitionIslandId != islandId) {
+                    nm.cancel(recognitionIslandId)
+                }
+                if (needsNarrowFontRebind) {
+                    sleepForTransition(NARROW_FONT_REBIND_DELAY_MS)
+                    // The new result holder now has an inflated title View. Switch
+                    // from the visually neutral prime to the complete result and
+                    // narrow face in one update.
+                    nm.notify(islandId, notification)
+                    sleepForTransition(RESULT_LAYOUT_SETTLE_DELAY_MS)
+                    // Keep SystemUI's real and fake holders converged after the
+                    // transition. Both updates contain the exact final payload.
+                    nm.notify(
+                        islandId,
+                        buildResultNotification(
+                            narrowFontOverride = true,
+                            suppressInitialFloat = true,
+                        ),
+                    )
+                }
                 AppLog.i(TAG, "Result island sent for session $sessionId (id=$islandId)")
             }
         }
@@ -782,17 +876,27 @@ object SuperIslandManager : SessionNotificationManager {
      * 取消指定 session 的超级岛通知。
      */
     fun cancelIslandForSession(context: Context, sessionId: Int) {
-        cancelIslandNotification(context, islandIdForSession(sessionId))
+        cancelForSession(context, sessionId)
     }
 
 
 }
 
+/** Xiaomi's narrow face supports numeric and Latin code text. */
+internal fun supportsNarrowFont(text: String): Boolean {
+    val compact = text.trim()
+    return compact.isNotEmpty() && compact.all {
+        it.isDigit() || it in 'A'..'Z' || it in 'a'..'z' || it in ".:-+/"
+    }
+}
+
 /**
- * Result capsules always use HyperOS's condensed face. A trailing thin space expands the
- * measured slot so the final condensed glyph is not clipped by SystemUI's right boundary.
+ * Keep the exact 1.0.3 capsule text path. HyperOS uses the trailing thin space
+ * when measuring the right text slot; removing it makes the same
+ * `narrowFont=true` payload render with the normal-width fallback on this build.
  */
-internal fun resultIslandCapsuleText(text: String): String = text.trimEnd() + "\u2009"
+internal fun islandCapsuleText(text: String, narrowFont: Boolean): String =
+    text.trimEnd() + if (narrowFont) "\u2009" else ""
 
 internal data class IslandProductTexts(
     val title: String,
