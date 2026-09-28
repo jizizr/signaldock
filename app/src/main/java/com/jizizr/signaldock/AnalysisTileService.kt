@@ -117,18 +117,7 @@ class AnalysisTileService : TileService() {
             return
         }
 
-        val aiSettings = AiSettingsStore.runtimeSnapshot()
-        val miclawSessionAvailable = runCatching {
-            MiclawSessionStore.load()?.isUsable == true
-        }.getOrDefault(false)
-        if (!isAiConfigurationReady(
-                usesMiclaw = aiSettings.usesMiclaw,
-                miclawUseExternalAgent = aiSettings.miclawUseExternalAgent,
-                miclawSessionAvailable = miclawSessionAvailable,
-                apiKey = aiSettings.apiKey,
-                connection = aiSettings.connection,
-            )
-        ) {
+        if (!AiSettingsStore.isCurrentConfigurationReady()) {
             openMainApp(R.string.tile_ai_configuration_required)
             return
         }

@@ -18,29 +18,92 @@ const MICLAW_CHAT_URL: &str = "https://api.miclaw.xiaomi.net/osbot/pc/llm/v1/cha
 #[derive(Debug, Deserialize, Serialize)]
 pub struct IslandInfo {
     /// 最核心凭证（取餐码、取件码、座位号等），去除前缀后的纯字符
+    #[serde(deserialize_with = "deserialize_credential")]
     pub title: String,
     /// title 的简短描述标签（2-4 个汉字）
     pub content: String,
     /// 商家、餐厅或服务网点名称；截图未提供时为空
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_optional_text")]
     pub merchant: String,
     /// 订单总价或当前应付价格；截图未提供时为空
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_optional_text")]
     pub price: String,
     /// 核心商品或服务名称；截图未提供时为空
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_optional_text")]
     pub item: String,
     /// 商品规格、温度、甜度等直接描述商品本身的次级信息
-    #[serde(rename = "itemDetail", default)]
+    #[serde(
+        rename = "itemDetail",
+        default,
+        deserialize_with = "deserialize_optional_text"
+    )]
     pub item_detail: String,
     /// 预计时间、状态等不属于商品规格的辅助详情
+    #[serde(default, deserialize_with = "deserialize_optional_text")]
     pub info: String,
     /// 图标枚举类型
-    #[serde(rename = "iconType")]
+    #[serde(
+        rename = "iconType",
+        default = "default_icon",
+        deserialize_with = "deserialize_optional_text"
+    )]
     pub icon_type: String,
     /// 与当前场景匹配的完成操作文字（2-4 个汉字）
-    #[serde(rename = "buttonText")]
+    #[serde(
+        rename = "buttonText",
+        default = "default_action",
+        deserialize_with = "deserialize_optional_text"
+    )]
     pub button_text: String,
+}
+
+fn default_icon() -> String {
+    "RECEIPT".to_owned()
+}
+fn default_action() -> String {
+    "已完成".to_owned()
+}
+
+fn deserialize_credential<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<String, D::Error> {
+    match serde_json::Value::deserialize(deserializer)? {
+        serde_json::Value::String(text) => Ok(text),
+        serde_json::Value::Number(number) => Ok(number.to_string()),
+        _ => Err(serde::de::Error::custom(
+            "credential must be text or a number",
+        )),
+    }
+}
+
+fn deserialize_optional_text<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<String, D::Error> {
+    fn text(value: serde_json::Value) -> Option<String> {
+        match value {
+            serde_json::Value::String(text) => Some(text),
+            serde_json::Value::Number(number) => Some(number.to_string()),
+            serde_json::Value::Null => Some(String::new()),
+            _ => None,
+        }
+    }
+    let value = serde_json::Value::deserialize(deserializer)?;
+    let converted = if let serde_json::Value::Array(values) = value {
+        values
+            .into_iter()
+            .map(text)
+            .collect::<Option<Vec<_>>>()
+            .map(|values| {
+                values
+                    .into_iter()
+                    .filter(|v| !v.is_empty())
+                    .collect::<Vec<_>>()
+                    .join("、")
+            })
+    } else {
+        text(value)
+    };
+    converted.ok_or_else(|| serde::de::Error::custom("display field must contain text"))
 }
 
 // ------------------------------------------------------------------------------
@@ -428,7 +491,7 @@ pub(crate) fn parse_island_info(raw_text: &str) -> Result<IslandInfo, AiError> {
         .trim_start_matches("```")
         .trim_end_matches("```")
         .trim();
-    match serde_json::from_str(cleaned) {
+    let parsed = match serde_json::from_str::<IslandInfo>(cleaned) {
         Ok(info) => Ok(info),
         Err(original) => {
             let start = cleaned.find('{');
@@ -440,7 +503,16 @@ pub(crate) fn parse_island_info(raw_text: &str) -> Result<IslandInfo, AiError> {
                 _ => Err(original.into()),
             }
         }
-    }
+    };
+    parsed.map(|mut info| {
+        if info.icon_type.is_empty() {
+            info.icon_type = default_icon();
+        }
+        if info.button_text.is_empty() {
+            info.button_text = default_action();
+        }
+        info
+    })
 }
 
 // ------------------------------------------------------------------------------
@@ -474,6 +546,46 @@ mod tests {
         .expect("legacy island JSON");
 
         assert!(result.price.is_empty());
+    }
+
+    #[test]
+    fn accepts_numeric_code_and_missing_presentation_fields() {
+        let result = parse_island_info(
+            r#"{"title":5312,"content":"取餐码","price":9,"item":["芭乐奶绿"],"merchant":null}"#,
+        )
+        .unwrap();
+        assert_eq!(result.title, "5312");
+        assert_eq!(result.price, "9");
+        assert_eq!(result.item, "芭乐奶绿");
+        assert!(result.info.is_empty());
+        assert_eq!(result.icon_type, "RECEIPT");
+        assert_eq!(result.button_text, "已完成");
+    }
+
+    #[test]
+    fn incomplete_or_ambiguous_credentials_still_fail() {
+        for response in [
+            r#"{}"#,
+            r#"{"content":"取餐码"}"#,
+            r#"{"title":["5312","9697"],"content":"取餐码"}"#,
+            r#"{"title":{"code":"5312"},"content":"取餐码"}"#,
+            "not JSON",
+        ] {
+            assert!(parse_island_info(response).is_err());
+        }
+    }
+
+    #[test]
+    fn preserves_code_leading_zeroes_and_defaults_null_optional_fields() {
+        let result = parse_island_info(
+            r#"```json
+{"title":"0053","content":"取餐码","info":null,"iconType":null,"buttonText":null}
+```"#,
+        )
+        .unwrap();
+        assert_eq!(result.title, "0053");
+        assert!(result.info.is_empty());
+        assert_eq!(result.button_text, "已完成");
     }
 
     #[test]

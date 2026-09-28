@@ -35,6 +35,7 @@ class App : Application() {
         AppUiSettingsStore.init(this)
         AiSettingsStore.init(this)
         MiclawSessionStore.init(this)
+        XiaomiSessionStore.init(this)
         SuperIslandSettingsStore.init(this)
         AutoPageProfileStore.init(this)
         AutoPageNotificationLockStore.init(this)

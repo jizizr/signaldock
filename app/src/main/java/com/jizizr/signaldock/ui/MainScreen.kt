@@ -417,6 +417,8 @@ private fun SettingsRootScreen(
                         shizuku = shizuku,
                         notificationGranted = notificationGranted,
                         aiConfigured = settings.isConfigured,
+                        usesXiaomi = settings.usesXiaomi,
+                        usesPickup = settings.usesPickup,
                         onRequestShizuku = onRequestShizuku,
                         onRequestNotification = onRequestNotification,
                         onAddTile = {

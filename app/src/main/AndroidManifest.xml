@@ -3,7 +3,8 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <queries>
-        <package android:name="com.aios.osbot" />
+        <package android:name="com.miui.voiceassist" />
+        <package android:name="com.xiaomi.account" />
         <package android:name="moe.shizuku.privileged.api" />
         <package android:name="com.miui.securitycenter" />
         <intent>
@@ -26,8 +27,6 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" tools:ignore="ProtectedPermissions" />
 
-    <!-- Declared by Miclaw; request it for the optional External Agent transport. -->
-    <uses-permission android:name="com.aios.osbot.permission.EXTERNAL_AGENT" />
     <application
         android:name=".App"
         android:enableOnBackInvokedCallback="true"
@@ -41,6 +40,7 @@
         android:theme="@style/Theme.Signaldock">
 
         <!--  主 Activity  -->
+        <activity android:name=".XiaomiWebLoginActivity" android:exported="false" />
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -119,7 +119,16 @@
             </intent-filter>
         </service>
 
-        <!-- Shell-only end-to-end Miclaw regression test. -->
+        <!-- Shell-only recognition regression test; legacy component/action names. -->
+        <service
+            android:name=".MiclawSelfTestService"
+            android:foregroundServiceType="specialUse"
+            android:exported="true"
+            android:permission="android.permission.DUMP">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="ADB-triggered screenshot recognition regression test" />
+        </service>
         <receiver
             android:name=".MiclawSelfTestReceiver"
             android:exported="true"

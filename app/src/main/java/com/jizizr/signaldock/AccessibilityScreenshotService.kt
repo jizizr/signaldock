@@ -22,7 +22,6 @@ import android.view.accessibility.AccessibilityEvent
 import android.widget.Toast
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.Semaphore
-import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -41,7 +40,6 @@ class AccessibilityScreenshotService : AccessibilityService() {
         private const val PANEL_MIN_CLOSE_DELAY_MS = 250L
         private const val PANEL_MAX_CLOSE_DELAY_MS = 1500L
         private const val PANEL_READY_POLL_MS = 50L
-        private const val SOURCE_ICON_RECOGNIZING_WAIT_MS = 250L
         private const val AUTO_EVENT_DEBOUNCE_MS = 600L
         private const val AUTO_REARM_DELAY_MS = 800L
         private const val ACCESSIBILITY_EVENT_TEXT_TTL_MS = 2_000L
@@ -737,15 +735,7 @@ class AccessibilityScreenshotService : AccessibilityService() {
                                     "elapsed=${SystemClock.elapsedRealtime() - startedAtMs}ms",
                             )
                         }, sourceIconExecutor)
-                        // Give the fast source-icon lookup a short head start so the recognizing
-                        // island normally uses the same icon as the final result without turning
-                        // icon resolution into an unbounded pipeline dependency.
-                        runCatching {
-                            sourceIconFuture.get(
-                                SOURCE_ICON_RECOGNIZING_WAIT_MS,
-                                TimeUnit.MILLISECONDS,
-                            )
-                        }
+                        // Recognition uses a system animation; only the result needs the source icon.
                         // Immediately show "识别中" state before the blocking analysis.
                         val recognizingStarted = runCatching {
                             startForegroundService(

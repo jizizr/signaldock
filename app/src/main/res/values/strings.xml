@@ -60,10 +60,12 @@
     <string name="ai_configuration">AI 配置</string>
     <string name="ai_configuration_ready">已配置</string>
     <string name="ai_configuration_incomplete">请补全 API Key、Base URL 和 Model ID</string>
+    <string name="xiaomi_configuration_incomplete">请在 AI 设置中连接超级小爱</string>
+    <string name="xiaomi_pickup_unavailable">取餐码渠道暂不可用，请选择超级小爱或自定义接口</string>
     <string name="authorize">授权</string>
     <string name="add">添加</string>
     <string name="provider_preset">服务商预设</string>
-    <string name="provider_preset_summary">选择 Miclaw 或自定义接口</string>
+    <string name="provider_preset_summary">选择小米取餐码、超级小爱或自定义接口</string>
     <string name="connection_parameters">连接参数</string>
     <string name="connection_parameters_incomplete">尚未配置 Model ID</string>
     <string name="custom_model">自定义模型</string>

@@ -27,11 +27,15 @@ data class AiRuntimeSettings(
     val connection: AiConnectionConfiguration,
     val miclawThinkingEnabled: Boolean,
     val miclawUseExternalAgent: Boolean,
+    val transport: AiTransport = AiTransport.OPENAI_COMPATIBLE,
+    val xiaoAiMode: XiaoAiMode = XiaoAiMode.FAST,
 )
 
 enum class AiTransport {
     OPENAI_COMPATIBLE,
     MICLAW,
+    XIAOMI_PICKUP,
+    SUPER_XIAOAI,
 }
 
 /**
@@ -43,17 +47,20 @@ object AiSettingsStore {
     /** 「自定义」预设的固定 ID */
     const val CUSTOM_PRESET_ID = "custom"
     const val MICLAW_PRESET_ID = "miclaw"
+    const val XIAOMI_PICKUP_PRESET_ID = "xiaomi_pickup"
+    const val SUPER_XIAOAI_PRESET_ID = "super_xiaoai"
 
     // 预设列表（静态定义）
     val PRESETS = listOf(
         AiPreset(
-            id = MICLAW_PRESET_ID,
-            name = "Miclaw",
+            id = SUPER_XIAOAI_PRESET_ID,
+            name = "超级小爱",
             baseUrl = "",
-            modelId = "Miclaw 当前模型",
+            modelId = "",
             reasoningEffort = "",
-            transport = AiTransport.MICLAW,
+            transport = AiTransport.SUPER_XIAOAI,
         ),
+        AiPreset(XIAOMI_PICKUP_PRESET_ID, "小米取餐码", "", "", "", AiTransport.XIAOMI_PICKUP),
         AiPreset(
             id = CUSTOM_PRESET_ID,
             name = "自定义",
@@ -108,6 +115,10 @@ object AiSettingsStore {
     private fun migrateRemovedPreset() {
         val selectedId = prefs.getString(KEY_SELECTED_PRESET, defaultPreset.id) ?: defaultPreset.id
         if (PRESETS.any { it.id == selectedId }) return
+        if (selectedId == MICLAW_PRESET_ID) {
+            prefs.edit { putString(KEY_SELECTED_PRESET, SUPER_XIAOAI_PRESET_ID) }
+            return
+        }
         val oldApiKey = apiKeyFor(selectedId)
         val customApiKey = apiKeyFor(CUSTOM_PRESET_ID)
         prefs.edit {
@@ -180,7 +191,24 @@ object AiSettingsStore {
             connection = resolveAiConnectionConfiguration(preset, customConfiguration),
             miclawThinkingEnabled = miclawThinkingEnabled,
             miclawUseExternalAgent = miclawUseExternalAgent,
+            transport = preset.transport,
+            xiaoAiMode = xiaoAiMode,
         )
+    }
+
+    var xiaoAiMode: XiaoAiMode
+        get() = runCatching { XiaoAiMode.valueOf(prefs.getString("xiaoai_mode", "FAST")!!) }.getOrDefault(XiaoAiMode.FAST)
+        set(value) { prefs.edit { putString("xiaoai_mode", value.name) } }
+
+    fun isCurrentConfigurationReady(): Boolean {
+        if (selectedPreset.transport in setOf(AiTransport.XIAOMI_PICKUP, AiTransport.SUPER_XIAOAI)) {
+            val session = XiaomiSessionStore.load() ?: return false
+            return isXiaomiConfigurationReady(
+                selectedPreset.transport == AiTransport.XIAOMI_PICKUP, xiaoAiMode,
+                session.isUsable, session.independentDevice, session.expertToken.isNotBlank(),
+            )
+        }
+        return isAiConfigurationReady(false, false, false, apiKeyFor(selectedPreset.id), activeConfiguration)
     }
 
     /** Direct API thinking control. Disabled by default for lower latency and stricter JSON. */
@@ -249,10 +277,9 @@ internal fun legacyCustomConfigurationOrNull(
     reasoningEffort: String,
 ): AiConnectionConfiguration? {
     if (selectedPresetId != AiSettingsStore.CUSTOM_PRESET_ID) return null
-    val miclaw = AiSettingsStore.PRESETS.first { it.id == AiSettingsStore.MICLAW_PRESET_ID }
-    if (baseUrl == miclaw.baseUrl &&
-        modelId == miclaw.modelId &&
-        reasoningEffort == miclaw.reasoningEffort
+    if (baseUrl.isBlank() &&
+        modelId == "Miclaw 当前模型" &&
+        reasoningEffort.isBlank()
     ) {
         return null
     }

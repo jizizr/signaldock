@@ -47,8 +47,8 @@ internal class EncryptedValueStore(
         val cipher = Cipher.getInstance(TRANSFORMATION)
         cipher.init(Cipher.ENCRYPT_MODE, getOrCreateKey())
         val packed = cipher.iv + cipher.doFinal(value.toByteArray(Charsets.UTF_8))
-        prefs.edit(commit = true) {
-            putString(key, Base64.encodeToString(packed, Base64.NO_WRAP))
+        check(prefs.edit().putString(key, Base64.encodeToString(packed, Base64.NO_WRAP)).commit()) {
+            "无法保存连接，请重试"
         }
     }
 

@@ -9,9 +9,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import com.jizizr.signaldock.AiConnectionConfiguration
 import com.jizizr.signaldock.AiSettingsStore
-import com.jizizr.signaldock.MiclawSession
-import com.jizizr.signaldock.MiclawSessionStore
+import com.jizizr.signaldock.AiTransport
+import com.jizizr.signaldock.XiaoAiMode
+import com.jizizr.signaldock.XiaomiSessionStore
 import com.jizizr.signaldock.isAiConfigurationReady
+import com.jizizr.signaldock.isXiaomiConfigurationReady
 
 /**
  * AI 参数的 UI 状态持有者。
@@ -30,8 +32,10 @@ class AiSettingsState {
     val selectedPresetName: String
         get() = presets.getOrNull(presetIndex)?.name.orEmpty()
 
-    val usesMiclaw: Boolean
-        get() = presets.getOrNull(presetIndex)?.id == AiSettingsStore.MICLAW_PRESET_ID
+    val usesXiaomi: Boolean
+        get() = presets.getOrNull(presetIndex)?.transport != AiTransport.OPENAI_COMPATIBLE
+    val usesPickup: Boolean
+        get() = presets.getOrNull(presetIndex)?.transport == AiTransport.XIAOMI_PICKUP
 
     var presetIndex by mutableIntStateOf(
         presets.indexOfFirst { it.id == AiSettingsStore.selectedPresetId }.coerceAtLeast(0)
@@ -47,56 +51,33 @@ class AiSettingsState {
     var reasoningEffort by mutableStateOf(initialConfiguration.reasoningEffort)
         private set
 
-    var miclawThinkingEnabled by mutableStateOf(AiSettingsStore.miclawThinkingEnabled)
+    var xiaoAiMode by mutableStateOf(AiSettingsStore.xiaoAiMode)
         private set
-    var miclawUseExternalAgent by mutableStateOf(AiSettingsStore.miclawUseExternalAgent)
+    var xiaomiConnected by mutableStateOf(XiaomiSessionStore.load()?.isUsable == true)
         private set
-    var miclawSessionAvailable by mutableStateOf(MiclawSessionStore.load()?.isUsable == true)
+    var expertConnected by mutableStateOf(XiaomiSessionStore.load()?.expertToken?.isNotBlank() == true)
+        private set
+    var independentXiaomiSession by mutableStateOf(XiaomiSessionStore.load()?.independentDevice == true)
         private set
 
     val isConfigured: Boolean
-        get() = isAiConfigurationReady(
-            usesMiclaw = usesMiclaw,
-            miclawUseExternalAgent = miclawUseExternalAgent,
-            miclawSessionAvailable = miclawSessionAvailable,
-            apiKey = apiKey,
-            connection = AiConnectionConfiguration(baseUrl, modelId, reasoningEffort),
-        )
+        get() = if (usesXiaomi) {
+            isXiaomiConfigurationReady(usesPickup, xiaoAiMode, xiaomiConnected,
+                independentXiaomiSession, expertConnected)
+        } else {
+            isAiConfigurationReady(false, false, false, apiKey, AiConnectionConfiguration(baseUrl, modelId, reasoningEffort))
+        }
 
-    fun updateMiclawThinkingEnabled(enabled: Boolean) {
-        miclawThinkingEnabled = enabled
-        AiSettingsStore.miclawThinkingEnabled = enabled
+    fun selectXiaoAiMode(index: Int) {
+        xiaoAiMode = if (index == 1) XiaoAiMode.EXPERT else XiaoAiMode.FAST
+        AiSettingsStore.xiaoAiMode = xiaoAiMode
     }
 
-    fun updateMiclawUseExternalAgent(enabled: Boolean) {
-        miclawUseExternalAgent = enabled
-        AiSettingsStore.miclawUseExternalAgent = enabled
-    }
-
-    fun saveMiclawSession(
-        serviceToken: String,
-        passToken: String,
-        userId: String,
-        cUserId: String,
-    ) {
-        MiclawSessionStore.save(
-            MiclawSession(
-                serviceToken = serviceToken.trim(),
-                passToken = passToken.trim(),
-                userId = userId.trim(),
-                cUserId = cUserId.trim(),
-            ),
-        )
-        refreshMiclawSessionStatus()
-    }
-
-    fun clearMiclawSession() {
-        MiclawSessionStore.clear()
-        refreshMiclawSessionStatus()
-    }
-
-    fun refreshMiclawSessionStatus() {
-        miclawSessionAvailable = MiclawSessionStore.load()?.isUsable == true
+    fun refreshXiaomiSession() {
+        val session = XiaomiSessionStore.load()
+        xiaomiConnected = session?.isUsable == true
+        expertConnected = session?.expertToken?.isNotBlank() == true
+        independentXiaomiSession = session?.independentDevice == true
     }
 
     fun selectPreset(index: Int) {

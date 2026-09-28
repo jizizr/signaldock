@@ -25,6 +25,8 @@ internal fun RuntimeStatusSection(
     shizuku: ShizukuState,
     notificationGranted: Boolean,
     aiConfigured: Boolean,
+    usesXiaomi: Boolean,
+    usesPickup: Boolean,
     onRequestShizuku: () -> Unit,
     onRequestNotification: () -> Unit,
     onAddTile: () -> Unit,
@@ -82,6 +84,8 @@ internal fun RuntimeStatusSection(
         title = stringResource(R.string.ai_configuration),
         summary = stringResource(
             if (aiConfigured) R.string.ai_configuration_ready
+            else if (usesPickup) R.string.xiaomi_pickup_unavailable
+            else if (usesXiaomi) R.string.xiaomi_configuration_incomplete
             else R.string.ai_configuration_incomplete,
         ),
         startAction = {

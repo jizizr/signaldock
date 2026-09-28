@@ -76,92 +76,36 @@ object RustBridge {
      * Analyse a screenshot [Bitmap].
      * Converts to RGBA bytes and delegates all processing to Rust.
      */
-    fun analyzeScreenshot(context: android.content.Context, bitmap: Bitmap): NotificationData {
-        val settings = AiSettingsStore.runtimeSnapshot()
+    fun analyzeScreenshot(
+        context: android.content.Context,
+        bitmap: Bitmap,
+        settings: AiRuntimeSettings = AiSettingsStore.runtimeSnapshot(),
+    ): NotificationData {
         val preprocessingStartedAtMs = SystemClock.elapsedRealtime()
         val nativeImageFuture = CompletableFuture.supplyAsync(
             bitmap::toNativeScreenshot,
             preprocessingExecutor,
         )
+        var uploadFuture: CompletableFuture<String>? = null
         return try {
-            val json = if (settings.usesMiclaw) {
-                if (settings.miclawUseExternalAgent) {
-                    AppLog.i(TAG, "AI request: provider=Miclaw, transport=external-agent")
-                    val qrFuture = nativeImageFuture.thenApplyAsync(
-                        { image -> detectQrNative(image.rgba, image.width, image.height) },
-                        preprocessingExecutor,
-                    )
-                    val rawText = MiclawAgentClient.analyzeScreenshot(
-                        context.applicationContext,
-                        bitmap,
-                        miclawPrompt(),
-                    ).getOrThrow()
-                    analyzeMiclawResultNative(rawText, qrFuture.join())
-                } else {
-                    val jpegFuture = CompletableFuture.supplyAsync(
-                        { bitmap.toUploadJpegBase64() },
-                        preprocessingExecutor,
-                    )
-                    var session = MiclawSessionStore.load()
-                        ?: error("Miclaw 尚未登录，请先在 AI 服务中登录")
-                    if (session.serviceToken.isBlank()) {
-                        session = MiclawPassportClient.refresh(session)
-                        MiclawSessionStore.save(session)
-                    }
-                    AppLog.i(
-                        TAG,
-                        "AI request: provider=Miclaw, transport=direct-api, thinking=${settings.miclawThinkingEnabled}",
-                    )
-                    val image = nativeImageFuture.join()
-                    val jpegB64 = jpegFuture.join()
-                    AppLog.i(
-                        TAG,
-                        "Image preprocessing ready: ${SystemClock.elapsedRealtime() - preprocessingStartedAtMs}ms",
-                    )
-                    var directJson = analyzeMiclawDirectNative(
-                        image.rgba, image.width, image.height,
-                        session.serviceToken,
-                        session.cUserId,
-                        settings.miclawThinkingEnabled,
-                        jpegB64,
-                    )
-                    if (isMiclawUnauthorizedDiagnostic(JSONObject(directJson).optString("debugError"))) {
-                        session = runCatching {
-                            if (session.canRefresh) {
-                                AppLog.i(TAG, "Miclaw token expired; refreshing with encrypted passToken")
-                                MiclawPassportClient.refresh(session).also(MiclawSessionStore::save)
-                            } else if (AppShell.isShizukuRoot) {
-                                AppLog.i(TAG, "Miclaw token expired; refreshing through system Xiaomi account")
-                                MiclawCredentialImporter.importFromSystemAccount(
-                                    context.applicationContext,
-                                    forceRefresh = true,
-                                ).getOrThrow()
-                            } else {
-                                error("Miclaw session has no refresh credentials")
-                            }
-                        }.getOrElse { error ->
-                            AppLog.e(TAG, "Miclaw session refresh failed: ${error.message}")
-                            error("Miclaw 登录已失效，请重新登录")
-                        }
-                        directJson = analyzeMiclawDirectNative(
-                            image.rgba, image.width, image.height,
-                            session.serviceToken,
-                            session.cUserId,
-                            settings.miclawThinkingEnabled,
-                            jpegB64,
-                        )
-                        if (isMiclawUnauthorizedDiagnostic(JSONObject(directJson).optString("debugError"))) {
-                            AppLog.e(TAG, "Miclaw request remained unauthorized after refresh")
-                            error("Miclaw 登录已失效，请重新登录")
-                        }
-                    }
-                    directJson
-                }
+            val json = if (settings.transport == AiTransport.XIAOMI_PICKUP || settings.transport == AiTransport.SUPER_XIAOAI) {
+                val qrFuture = nativeImageFuture.thenApplyAsync(
+                    { image -> detectQrNative(image.rgba, image.width, image.height) },
+                    preprocessingExecutor,
+                )
+                AppLog.i(TAG, "AI request: provider=${settings.transport}, mode=${settings.xiaoAiMode}")
+                val rawText = XiaomiRecognitionClient.analyze(
+                    context.applicationContext, bitmap,
+                    pickup = settings.transport == AiTransport.XIAOMI_PICKUP,
+                    mode = settings.xiaoAiMode,
+                    prompt = miclawPrompt(),
+                )
+                analyzeMiclawResultNative(rawText, qrFuture.join())
             } else {
                 val jpegFuture = CompletableFuture.supplyAsync(
                     { bitmap.toUploadJpegBase64() },
                     preprocessingExecutor,
-                )
+                ).also { uploadFuture = it }
                 val connection = settings.connection
                 AppLog.i(TAG, "AI request: provider=Custom, transport=openai-compatible")
                 val image = nativeImageFuture.join()
@@ -194,6 +138,11 @@ object RustBridge {
                 body = e.message ?: "",
                 error = e.message ?: e.javaClass.simpleName,
             )
+        } finally {
+            // The caller recycles bitmap after return, including login/network failures.
+            // Finish every bitmap reader before allowing that ownership transfer.
+            runCatching { nativeImageFuture.join() }
+            uploadFuture?.let { runCatching { it.join() } }
         }
     }
 

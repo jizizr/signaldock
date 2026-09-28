@@ -12,7 +12,7 @@ val rustTargetMap = mapOf(
     "arm64-v8a" to "aarch64-linux-android"
 )
 
-val ndkVersion  = "27.2.12479018"
+val configuredNdkVersion = providers.gradleProperty("ndkVersion").getOrElse("27.2.12479018")
 val localProperties = Properties().apply {
     rootProject.file("local.properties").takeIf(File::isFile)?.inputStream()?.use { load(it) }
 }
@@ -45,11 +45,11 @@ val androidSdkDir = System.getenv("ANDROID_HOME")
     ?: System.getenv("ANDROID_SDK_ROOT")
     ?: localProperties.getProperty("sdk.dir")
     ?: defaultSdkDir
-val ndkHomeVal  = "$androidSdkDir/ndk/$ndkVersion"
+val ndkHomeVal  = "$androidSdkDir/ndk/$configuredNdkVersion"
 val rustDirPath = rootProject.file("rust").absolutePath
-val jniLibsDir     = layout.buildDirectory.dir("rustLibs")
-// Resolve once at configuration time — safe because buildDirectory is stable and never a Transform
-val jniLibsDirFile = jniLibsDir.get().asFile
+// Isolate variant outputs so building Debug cannot contaminate a subsequent Release APK.
+val debugJniLibsDir = layout.buildDirectory.dir("rustLibs/debug").get().asFile
+val releaseJniLibsDir = layout.buildDirectory.dir("rustLibs/release").get().asFile
 
 /**
  * Configuration-cache-compatible Rust build task.
@@ -75,6 +75,7 @@ abstract class BuildRustTask : DefaultTask() {
             val logFile = File(temporaryDir, "$abi-cargo.log")
             val args    = buildList {
                 add(cargoExe); add("ndk"); add("-t"); add(abi); add("build")
+                add("--locked")
                 if (releaseMode.get()) add("--release")
             }
             val process = ProcessBuilder(args)
@@ -109,13 +110,12 @@ fun registerBuildRustTask(taskName: String, release: Boolean) =
         ndkHome.set(ndkHomeVal)
         releaseMode.set(release)
         rustTargets.set(rustTargetMap)
-        outputDir.set(jniLibsDir)
+        outputDir.set(if (release) releaseJniLibsDir else debugJniLibsDir)
         inputs.files(
             fileTree(rustDirPath) {
                 include("Cargo.toml", "Cargo.lock", "src/**")
             }
         )
-        outputs.dir(jniLibsDirFile)
     }
 
 val buildRustDebug   = registerBuildRustTask("buildRustDebug",   release = false)
@@ -123,7 +123,7 @@ val buildRustRelease = registerBuildRustTask("buildRustRelease", release = true)
 
 android {
     namespace = "com.jizizr.signaldock"
-    ndkVersion = "27.2.12479018"
+    ndkVersion = configuredNdkVersion
     // miuix 0.9.x AAR 元数据要求消费方 compileSdk ≥ 37；targetSdk/minSdk 维持 36 不变
     compileSdk {
         version = release(37)
@@ -158,7 +158,8 @@ android {
 
     // Register Rust output directory — use a resolved string path (not a Provider) to satisfy
     // AGP's restriction against adding Provider instances to the SourceSet API.
-    sourceSets["main"].jniLibs.directories.add(jniLibsDirFile.path)
+    sourceSets["debug"].jniLibs.directories.add(debugJniLibsDir.path)
+    sourceSets["release"].jniLibs.directories.add(releaseJniLibsDir.path)
 
     val localReleaseSigning = if (hasReleaseSigningConfig) {
         signingConfigs.create("release") {
@@ -217,6 +218,7 @@ afterEvaluate {
 }
 
 dependencies {
+    implementation(libs.okhttp)
     compileOnly(project(":hidden-api"))
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
@@ -236,6 +238,8 @@ dependencies {
     implementation(libs.shizuku.api)
     implementation(libs.shizuku.provider)
     testImplementation(libs.junit)
+    // Exercise the speech protocol on the JVM without installing a second app.
+    testImplementation("org.json:json:20250517")
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(platform(libs.androidx.compose.bom))

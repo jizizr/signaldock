@@ -133,12 +133,11 @@ object DiagnosticLogStore {
         )
         if (queue.offerLast(entry)) return
 
-        val oldest = queue.pollFirst()
-        if (oldest is Command.Entry) {
+        val oldest = queue.peekFirst()
+        if (oldest is Command.Entry && queue.removeFirstOccurrence(oldest)) {
             droppedEntries.incrementAndGet()
             if (!queue.offerLast(entry)) droppedEntries.incrementAndGet()
         } else {
-            oldest?.let(queue::offerFirst)
             droppedEntries.incrementAndGet()
         }
     }
@@ -179,6 +178,8 @@ object DiagnosticLogStore {
     }
 
     private fun offerControl(command: Command, timeoutMs: Long): Boolean {
+        // Clear/export must also work when logging was disabled before process startup.
+        startWriterIfNeeded()
         val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs)
         while (System.nanoTime() < deadline) {
             if (queue.offerLast(command, 50, TimeUnit.MILLISECONDS)) return true

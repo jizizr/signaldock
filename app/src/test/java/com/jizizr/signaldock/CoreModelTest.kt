@@ -130,8 +130,8 @@ class CoreModelTest {
 
     @Test
     fun providerSwitch_keepsCustomConnectionConfigurationIndependent() {
-        val miclaw = AiSettingsStore.PRESETS.single {
-            it.id == AiSettingsStore.MICLAW_PRESET_ID
+        val xiaoai = AiSettingsStore.PRESETS.single {
+            it.id == AiSettingsStore.SUPER_XIAOAI_PRESET_ID
         }
         val custom = AiSettingsStore.PRESETS.single {
             it.id == AiSettingsStore.CUSTOM_PRESET_ID
@@ -143,13 +143,22 @@ class CoreModelTest {
         )
 
         assertEquals(
-            "Miclaw 当前模型",
-            resolveAiConnectionConfiguration(miclaw, customConfiguration).modelId,
+            "",
+            resolveAiConnectionConfiguration(xiaoai, customConfiguration).modelId,
         )
         assertEquals(
             customConfiguration,
             resolveAiConnectionConfiguration(custom, customConfiguration),
         )
+    }
+
+    @Test
+    fun providersUseIndependentXiaomiTransportsAndRemoveClosedBeta() {
+        assertFalse(AiSettingsStore.PRESETS.any { it.id == AiSettingsStore.MICLAW_PRESET_ID })
+        assertEquals(AiTransport.XIAOMI_PICKUP,
+            AiSettingsStore.PRESETS.single { it.id == AiSettingsStore.XIAOMI_PICKUP_PRESET_ID }.transport)
+        assertEquals(AiTransport.SUPER_XIAOAI,
+            AiSettingsStore.PRESETS.single { it.id == AiSettingsStore.SUPER_XIAOAI_PRESET_ID }.transport)
     }
 
     @Test
