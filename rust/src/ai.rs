@@ -8,8 +8,6 @@ use serde_json::json;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
-const MICLAW_CHAT_URL: &str = "https://api.miclaw.xiaomi.net/osbot/pc/llm/v1/chat/completions";
-
 // ------------------------------------------------------------------------------
 // 返回结构体
 // ------------------------------------------------------------------------------
@@ -406,79 +404,7 @@ pub async fn analyze_screenshot_with_ai(
     Ok(info)
 }
 
-/// Calls Xiaomi's Miclaw PC endpoint directly. No Miclaw process or agent prompt is involved.
-pub async fn analyze_screenshot_with_miclaw(
-    service_token: &str,
-    c_user_id: &str,
-    jpeg_b64: &str,
-    enable_thinking: bool,
-) -> Result<IslandInfo, AiError> {
-    if service_token.trim().is_empty() {
-        return Err(AiError::Client("Miclaw serviceToken is empty".into()));
-    }
-
-    let client = shared_http_client()?;
-
-    let cookie = if c_user_id.trim().is_empty() {
-        format!("serviceToken={service_token}")
-    } else {
-        format!("serviceToken={service_token}; cUserId={c_user_id}")
-    };
-    let body = json!({
-        "model": "xiaomi/mimo",
-        "messages": [{
-            "role": "user",
-            "content": [
-                { "type": "text", "text": USER_PROMPT },
-                {
-                    "type": "image_url",
-                    "image_url": { "url": format!("data:image/jpeg;base64,{jpeg_b64}") }
-                }
-            ]
-        }],
-        "temperature": 0.1,
-        "max_tokens": 1024,
-        "stream": false,
-        "chat_template_kwargs": { "enable_thinking": enable_thinking },
-        "response_format": { "type": "json_object" }
-    });
-
-    let started = std::time::Instant::now();
-    let response = client
-        .post(MICLAW_CHAT_URL)
-        .header("User-Agent", "node")
-        .header("Accept", "*/*")
-        .header("Cookie", cookie)
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| AiError::Client(format!("Miclaw request failed: {e}")))?;
-    let status = response.status();
-    let text = response
-        .text()
-        .await
-        .map_err(|e| AiError::Client(format!("Miclaw response read failed: {e}")))?;
-    if !status.is_success() {
-        let preview: String = text.chars().take(300).collect();
-        return Err(AiError::Client(format!(
-            "Miclaw HTTP {}: {}",
-            status.as_u16(),
-            preview
-        )));
-    }
-    log::info!(
-        "Miclaw direct request completed: thinking={}, elapsed={}ms",
-        enable_thinking,
-        started.elapsed().as_millis()
-    );
-
-    let assistant_text = assistant_text_from_response(&text)
-        .map_err(|error| AiError::InvalidResponse(format!("Miclaw envelope: {error}")))?;
-    parse_island_info(&assistant_text)
-        .map_err(|error| AiError::InvalidResponse(format!("Miclaw model output: {error}")))
-}
-
-/// Parses the final text returned by either an OpenAI-compatible model or Miclaw.
+/// Parses the structured model output shared by all recognition providers.
 pub(crate) fn parse_island_info(raw_text: &str) -> Result<IslandInfo, AiError> {
     let without_thinking = if let Some(end) = raw_text.rfind("</think>") {
         &raw_text[end + "</think>".len()..]

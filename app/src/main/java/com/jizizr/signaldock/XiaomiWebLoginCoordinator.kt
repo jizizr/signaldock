@@ -29,7 +29,7 @@ internal object XiaomiWebLoginCoordinator {
                 try {
                     val raw = XiaomiRecognitionClient.analyzeWithSession(app, fixture,
                         candidate, pickup = false, mode = XiaoAiMode.FAST, prompt = "")
-                    val parsed = RustBridge.parseMiclawResult(fixture, raw)
+                    val parsed = RustBridge.parseModelResult(fixture, raw)
                     check(parsed.error.isBlank() && parsed.title.contains("5312") &&
                         (parsed.body + parsed.infoLines.joinToString()).contains("芭乐奶绿")) {
                         "网页登录成功，但快速识别未通过测试；原有连接未改变"

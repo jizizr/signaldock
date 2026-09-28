@@ -65,7 +65,7 @@ class AiSettingsState {
             isXiaomiConfigurationReady(usesPickup, xiaoAiMode, xiaomiConnected,
                 independentXiaomiSession, expertConnected)
         } else {
-            isAiConfigurationReady(false, false, false, apiKey, AiConnectionConfiguration(baseUrl, modelId, reasoningEffort))
+            isAiConfigurationReady(apiKey, AiConnectionConfiguration(baseUrl, modelId, reasoningEffort))
         }
 
     fun selectXiaoAiMode(index: Int) {

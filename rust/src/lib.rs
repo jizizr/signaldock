@@ -9,7 +9,7 @@ pub mod ai;
 use base64::Engine;
 use image::GenericImageView;
 use jni::objects::{JByteArray, JClass, JString};
-use jni::sys::{jboolean, jint, jstring};
+use jni::sys::{jint, jstring};
 use jni::JNIEnv;
 use serde::{Deserialize, Serialize};
 
@@ -317,31 +317,6 @@ async fn analyze_screenshot(image: ScreenshotInput, request: OpenAiRequest) -> A
     )
 }
 
-async fn analyze_miclaw_screenshot(
-    image: ScreenshotInput,
-    service_token: String,
-    c_user_id: String,
-    enable_thinking: bool,
-) -> AnalysisResult {
-    let ScreenshotInput {
-        rgba_bytes,
-        width,
-        height,
-        jpeg_b64,
-    } = image;
-    let qr_task = tokio::task::spawn_blocking(move || detect_qr(rgba_bytes, width, height));
-    let ai_task =
-        ai::analyze_screenshot_with_miclaw(&service_token, &c_user_id, &jpeg_b64, enable_thinking);
-    let (qr, ai_result) = tokio::join!(qr_task, ai_task);
-    combine_results(
-        qr.unwrap_or(QrResult {
-            found: false,
-            region_png_b64: None,
-        }),
-        ai_result,
-    )
-}
-
 fn combine_results(qr: QrResult, ai_res: Result<ai::IslandInfo, ai::AiError>) -> AnalysisResult {
     match ai_res {
         Ok(info) => {
@@ -391,7 +366,7 @@ fn combine_results(qr: QrResult, ai_res: Result<ai::IslandInfo, ai::AiError>) ->
     }
 }
 
-fn analyze_miclaw_result(qr: QrResult, raw_text: &str) -> AnalysisResult {
+fn analyze_model_result(qr: QrResult, raw_text: &str) -> AnalysisResult {
     combine_results(qr, ai::parse_island_info(raw_text))
 }
 
@@ -411,36 +386,11 @@ fn user_facing_ai_error(error: &str) -> &'static str {
 
 fn diagnostic_ai_error(error: &ai::AiError) -> String {
     match error {
-        ai::AiError::Client(message) => {
-            if let Some(status) = message
-                .strip_prefix("Miclaw HTTP ")
-                .and_then(|rest| rest.split(':').next())
-                .filter(|status| status.chars().all(|char| char.is_ascii_digit()))
-            {
-                format!("miclaw_http_{status}")
-            } else if message.contains("Miclaw request failed") {
-                "miclaw_network_request_failed".to_owned()
-            } else if message.contains("Miclaw response read failed") {
-                "miclaw_response_read_failed".to_owned()
-            } else if message.contains("serviceToken is empty") {
-                "miclaw_service_token_empty".to_owned()
-            } else {
-                "miclaw_client_error".to_owned()
-            }
-        }
-        ai::AiError::Parse(_) => "miclaw_json_parse_failed".to_owned(),
-        ai::AiError::InvalidResponse(message) => {
-            if message.starts_with("Miclaw envelope") {
-                "miclaw_response_envelope_invalid".to_owned()
-            } else if message.starts_with("Miclaw model output") {
-                "miclaw_model_json_invalid".to_owned()
-            } else if message.contains("no assistant text") {
-                "miclaw_response_missing_assistant_text".to_owned()
-            } else {
-                "miclaw_invalid_response".to_owned()
-            }
-        }
+        ai::AiError::Client(_) => "ai_client_error",
+        ai::AiError::Parse(_) => "ai_json_parse_failed",
+        ai::AiError::InvalidResponse(_) => "ai_invalid_response",
     }
+    .to_owned()
 }
 
 /// Uses legacy `info` lines as item fields when older model output omits the new keys.
@@ -596,7 +546,7 @@ pub extern "system" fn Java_com_jizizr_signaldock_RustBridge_analyzeScreenshotNa
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_jizizr_signaldock_RustBridge_miclawPromptNative<'local>(
+pub extern "system" fn Java_com_jizizr_signaldock_RustBridge_recognitionPromptNative<'local>(
     env: JNIEnv<'local>,
     _class: JClass<'local>,
 ) -> jstring {
@@ -606,7 +556,7 @@ pub extern "system" fn Java_com_jizizr_signaldock_RustBridge_miclawPromptNative<
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_jizizr_signaldock_RustBridge_analyzeMiclawResultNative<'local>(
+pub extern "system" fn Java_com_jizizr_signaldock_RustBridge_analyzeModelResultNative<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
     j_raw_text: JString<'local>,
@@ -615,7 +565,7 @@ pub extern "system" fn Java_com_jizizr_signaldock_RustBridge_analyzeMiclawResult
     ensure_logger();
     let raw_text = match env.get_string(&j_raw_text) {
         Ok(text) => String::from(text),
-        Err(error) => return err_json(&mut env, &format!("bad Miclaw response: {error}")),
+        Err(error) => return err_json(&mut env, &format!("bad model response: {error}")),
     };
     let qr_json = match env.get_string(&j_qr_json) {
         Ok(text) => String::from(text),
@@ -628,7 +578,7 @@ pub extern "system" fn Java_com_jizizr_signaldock_RustBridge_analyzeMiclawResult
             region_png_b64: None,
         }
     });
-    let result = analyze_miclaw_result(qr, &raw_text);
+    let result = analyze_model_result(qr, &raw_text);
     let json = serde_json::to_string(&result)
         .unwrap_or_else(|error| format!(r#"{{"error":"serialize failed: {error}"}}"#));
     env.new_string(json)
@@ -650,57 +600,6 @@ pub extern "system" fn Java_com_jizizr_signaldock_RustBridge_detectQrNative<'loc
         Err(error) => return err_json(&mut env, &format!("convert_byte_array failed: {error}")),
     };
     let result = detect_qr(rgba, width, height);
-    let json = serde_json::to_string(&result)
-        .unwrap_or_else(|error| format!(r#"{{"error":"serialize failed: {error}"}}"#));
-    env.new_string(json)
-        .map(|value| value.into_raw())
-        .unwrap_or(std::ptr::null_mut())
-}
-
-#[no_mangle]
-pub extern "system" fn Java_com_jizizr_signaldock_RustBridge_analyzeMiclawDirectNative<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    rgba_bytes: JByteArray<'local>,
-    width: jint,
-    height: jint,
-    j_service_token: JString<'local>,
-    j_c_user_id: JString<'local>,
-    enable_thinking: jboolean,
-    j_jpeg_b64: JString<'local>,
-) -> jstring {
-    ensure_logger();
-    let rgba = match env.convert_byte_array(&rgba_bytes) {
-        Ok(bytes) => bytes,
-        Err(error) => return err_json(&mut env, &format!("convert_byte_array failed: {error}")),
-    };
-    let service_token = match env.get_string(&j_service_token) {
-        Ok(value) => String::from(value),
-        Err(error) => return err_json(&mut env, &format!("bad serviceToken: {error}")),
-    };
-    let c_user_id = match env.get_string(&j_c_user_id) {
-        Ok(value) => String::from(value),
-        Err(error) => return err_json(&mut env, &format!("bad cUserId: {error}")),
-    };
-    let jpeg_b64 = match env.get_string(&j_jpeg_b64) {
-        Ok(value) => String::from(value),
-        Err(error) => return err_json(&mut env, &format!("bad jpegB64: {error}")),
-    };
-    let runtime = match runtime() {
-        Ok(runtime) => runtime,
-        Err(error) => return err_json(&mut env, &format!("tokio build error: {error}")),
-    };
-    let result = runtime.block_on(analyze_miclaw_screenshot(
-        ScreenshotInput {
-            rgba_bytes: rgba,
-            width,
-            height,
-            jpeg_b64,
-        },
-        service_token,
-        c_user_id,
-        enable_thinking != 0,
-    ));
     let json = serde_json::to_string(&result)
         .unwrap_or_else(|error| format!(r#"{{"error":"serialize failed: {error}"}}"#));
     env.new_string(json)

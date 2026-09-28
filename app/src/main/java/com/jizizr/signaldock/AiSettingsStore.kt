@@ -22,18 +22,14 @@ data class AiConnectionConfiguration(
 )
 
 data class AiRuntimeSettings(
-    val usesMiclaw: Boolean,
     val apiKey: String,
     val connection: AiConnectionConfiguration,
-    val miclawThinkingEnabled: Boolean,
-    val miclawUseExternalAgent: Boolean,
     val transport: AiTransport = AiTransport.OPENAI_COMPATIBLE,
     val xiaoAiMode: XiaoAiMode = XiaoAiMode.FAST,
 )
 
 enum class AiTransport {
     OPENAI_COMPATIBLE,
-    MICLAW,
     XIAOMI_PICKUP,
     SUPER_XIAOAI,
 }
@@ -79,8 +75,6 @@ object AiSettingsStore {
     private const val KEY_CUSTOM_MODEL_ID = "custom_model_id"
     private const val KEY_CUSTOM_REASONING_EFFORT = "custom_reasoning_effort"
     private const val KEY_CUSTOM_CONFIGURATION_MIGRATED = "custom_configuration_migrated_v1"
-    private const val KEY_MICLAW_THINKING = "miclaw_enable_thinking"
-    private const val KEY_MICLAW_EXTERNAL_AGENT = "miclaw_use_external_agent"
     private const val SECRETS_PREFS_NAME = "ai_secrets"
     private const val SECRETS_KEY_ALIAS = "signaldock_ai_secrets_v1"
 
@@ -160,9 +154,6 @@ object AiSettingsStore {
     val selectedPreset: AiPreset
         get() = PRESETS.firstOrNull { it.id == selectedPresetId } ?: defaultPreset
 
-    val usesMiclaw: Boolean
-        get() = selectedPreset.transport == AiTransport.MICLAW
-
     // ---------- 每个预设独立记忆 API Key ----------
 
     fun apiKeyFor(presetId: String): String =
@@ -186,11 +177,8 @@ object AiSettingsStore {
     fun runtimeSnapshot(): AiRuntimeSettings {
         val preset = selectedPreset
         return AiRuntimeSettings(
-            usesMiclaw = preset.transport == AiTransport.MICLAW,
             apiKey = apiKeyFor(preset.id),
             connection = resolveAiConnectionConfiguration(preset, customConfiguration),
-            miclawThinkingEnabled = miclawThinkingEnabled,
-            miclawUseExternalAgent = miclawUseExternalAgent,
             transport = preset.transport,
             xiaoAiMode = xiaoAiMode,
         )
@@ -208,18 +196,8 @@ object AiSettingsStore {
                 session.isUsable, session.independentDevice, session.expertToken.isNotBlank(),
             )
         }
-        return isAiConfigurationReady(false, false, false, apiKeyFor(selectedPreset.id), activeConfiguration)
+        return isAiConfigurationReady(apiKeyFor(selectedPreset.id), activeConfiguration)
     }
-
-    /** Direct API thinking control. Disabled by default for lower latency and stricter JSON. */
-    var miclawThinkingEnabled: Boolean
-        get() = prefs.getBoolean(KEY_MICLAW_THINKING, false)
-        set(value) { prefs.edit { putBoolean(KEY_MICLAW_THINKING, value) } }
-
-    /** Explicit compatibility mode. This invokes Miclaw and may create its own island notification. */
-    var miclawUseExternalAgent: Boolean
-        get() = prefs.getBoolean(KEY_MICLAW_EXTERNAL_AGENT, false)
-        set(value) { prefs.edit { putBoolean(KEY_MICLAW_EXTERNAL_AGENT, value) } }
 
     /** Switches only the active provider; every provider keeps its own configuration. */
     fun applyPreset(preset: AiPreset) {
@@ -256,19 +234,15 @@ internal fun resolveAiConnectionConfiguration(
 }
 
 internal fun isAiConfigurationReady(
-    usesMiclaw: Boolean,
-    miclawUseExternalAgent: Boolean,
-    miclawSessionAvailable: Boolean,
     apiKey: String,
     connection: AiConnectionConfiguration,
-): Boolean = if (usesMiclaw) {
-    miclawUseExternalAgent || miclawSessionAvailable
-} else {
-    apiKey.isNotBlank() &&
-        (connection.baseUrl.startsWith("https://") ||
-            connection.baseUrl.startsWith("http://")) &&
-        connection.modelId.isNotBlank()
-}
+): Boolean = apiKey.isNotBlank() && isValidAiBaseUrl(connection.baseUrl) && connection.modelId.isNotBlank()
+
+internal fun isValidAiBaseUrl(value: String): Boolean = runCatching {
+    val uri = java.net.URI(value.trim())
+    uri.scheme in setOf("https", "http") && !uri.host.isNullOrBlank() && uri.rawUserInfo == null &&
+        uri.rawQuery == null && uri.rawFragment == null && uri.port in -1..65535
+}.getOrDefault(false)
 
 internal fun legacyCustomConfigurationOrNull(
     selectedPresetId: String,

@@ -162,36 +162,21 @@ class CoreModelTest {
     }
 
     @Test
-    fun aiConfigurationReadiness_handlesCustomAndMiclawRequirements() {
+    fun aiConfigurationReadinessRequiresAValidEndpointAndCredentials() {
         val connection = AiConnectionConfiguration(
             baseUrl = "https://api.example.com/v1",
             modelId = "vision-model",
         )
         assertTrue(
             isAiConfigurationReady(
-                usesMiclaw = false,
-                miclawUseExternalAgent = false,
-                miclawSessionAvailable = false,
                 apiKey = "example-key",
                 connection = connection,
             ),
         )
         assertFalse(
             isAiConfigurationReady(
-                usesMiclaw = false,
-                miclawUseExternalAgent = false,
-                miclawSessionAvailable = false,
                 apiKey = "",
                 connection = connection,
-            ),
-        )
-        assertTrue(
-            isAiConfigurationReady(
-                usesMiclaw = true,
-                miclawUseExternalAgent = false,
-                miclawSessionAvailable = true,
-                apiKey = "",
-                connection = AiConnectionConfiguration(),
             ),
         )
     }
@@ -223,29 +208,6 @@ class CoreModelTest {
                 reasoningEffort = "medium",
             ),
         )
-    }
-
-    @Test
-    fun miclawSession_requiresTokenOrRefreshCredentials() {
-        assertFalse(MiclawSession().isUsable)
-        assertTrue(MiclawSession(serviceToken = "service-token").isUsable)
-        assertTrue(MiclawSession(passToken = "pass-token", userId = "123").isUsable)
-        assertFalse(MiclawSession(passToken = "pass-token").isUsable)
-    }
-
-    @Test
-    fun miclawUnauthorizedDiagnostic_usesSanitizedDiagnosticCode() {
-        assertTrue(isMiclawUnauthorizedDiagnostic("miclaw_http_401"))
-        assertFalse(isMiclawUnauthorizedDiagnostic("miclaw_http_500"))
-        assertFalse(isMiclawUnauthorizedDiagnostic(""))
-    }
-
-    @Test
-    fun miclawCompatibility_requiresOneTrustedCallerCondition() {
-        assertFalse(miclawVerifierAcceptsCaller(false, false, false))
-        assertTrue(miclawVerifierAcceptsCaller(true, false, false))
-        assertTrue(miclawVerifierAcceptsCaller(false, true, false))
-        assertTrue(miclawVerifierAcceptsCaller(false, false, true))
     }
 
     @Test

@@ -34,17 +34,10 @@ class App : Application() {
         // 初始化 AI 参数持久化存储
         AppUiSettingsStore.init(this)
         AiSettingsStore.init(this)
-        MiclawSessionStore.init(this)
         XiaomiSessionStore.init(this)
         SuperIslandSettingsStore.init(this)
         AutoPageProfileStore.init(this)
         AutoPageNotificationLockStore.init(this)
         AccessibilityStartupRecovery.init(this)
-        if (
-            AiSettingsStore.miclawUseExternalAgent &&
-            !MiclawAgentClient.isCompatibilitySupported(this)
-        ) {
-            AiSettingsStore.miclawUseExternalAgent = false
-        }
     }
 }

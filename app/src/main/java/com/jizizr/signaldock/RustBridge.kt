@@ -44,10 +44,10 @@ object RustBridge {
     ): String
 
     @JvmStatic
-    private external fun miclawPromptNative(): String
+    private external fun recognitionPromptNative(): String
 
     @JvmStatic
-    private external fun analyzeMiclawResultNative(
+    private external fun analyzeModelResultNative(
         rawText: String,
         qrJson: String,
     ): String
@@ -57,17 +57,6 @@ object RustBridge {
         rgbaBytes: ByteArray,
         width: Int,
         height: Int,
-    ): String
-
-    @JvmStatic
-    private external fun analyzeMiclawDirectNative(
-        rgbaBytes: ByteArray,
-        width: Int,
-        height: Int,
-        serviceToken: String,
-        cUserId: String,
-        enableThinking: Boolean,
-        jpegB64: String,
     ): String
 
     //  Public API
@@ -98,9 +87,9 @@ object RustBridge {
                     context.applicationContext, bitmap,
                     pickup = settings.transport == AiTransport.XIAOMI_PICKUP,
                     mode = settings.xiaoAiMode,
-                    prompt = miclawPrompt(),
+                    prompt = recognitionPrompt(),
                 )
-                analyzeMiclawResultNative(rawText, qrFuture.join())
+                analyzeModelResultNative(rawText, qrFuture.join())
             } else {
                 val jpegFuture = CompletableFuture.supplyAsync(
                     { bitmap.toUploadJpegBase64() },
@@ -146,12 +135,12 @@ object RustBridge {
         }
     }
 
-    internal fun miclawPrompt(): String = miclawPromptNative()
+    internal fun recognitionPrompt(): String = recognitionPromptNative()
 
-    internal fun parseMiclawResult(bitmap: Bitmap, rawText: String): NotificationData {
+    internal fun parseModelResult(bitmap: Bitmap, rawText: String): NotificationData {
         val image = bitmap.toNativeScreenshot()
         return parseNotificationData(
-            analyzeMiclawResultNative(
+            analyzeModelResultNative(
                 rawText,
                 detectQrNative(image.rgba, image.width, image.height),
             ),
@@ -215,6 +204,3 @@ object RustBridge {
         val error: String = ""
     )
 }
-
-internal fun isMiclawUnauthorizedDiagnostic(diagnosticError: String): Boolean =
-    diagnosticError == "miclaw_http_401"
