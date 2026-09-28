@@ -29,7 +29,7 @@ object XiaomiCredentialImporter {
             Shizuku.bindUserService(args, connection)
             check(ready.await(15, TimeUnit.SECONDS)) { "连接小爱登录服务超时" }
             val service = checkNotNull(remote.get()) { "小爱登录服务已断开" }
-            XiaomiSession.fromJson(service.readSession()).also(XiaomiSessionStore::save)
+            XiaomiSessionStore.saveImported(XiaomiSession.fromJson(service.readSession()))
         } finally {
             runCatching { remote.get()?.destroy() }
             runCatching { Shizuku.unbindUserService(args, connection, true) }

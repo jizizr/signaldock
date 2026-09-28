@@ -50,19 +50,47 @@ object XiaomiSessionStore {
     private val sessionChanges = MutableStateFlow(0L)
     internal val changes = sessionChanges.asStateFlow()
     private lateinit var store: EncryptedValueStore
-    fun init(context: Context) {
+    private var cachedSession: XiaomiSession? = null
+    private var loaded = false
+
+    @Synchronized fun init(context: Context) {
         store = EncryptedValueStore(context, "xiaomi_session", "signaldock_xiaomi_session_v1")
+        cachedSession = null
+        loaded = false
     }
-    fun load(): XiaomiSession? = runCatching {
-        store.get("session")?.let(XiaomiSession::fromJson)
-    }.getOrNull()
-    fun save(session: XiaomiSession) {
+    @Synchronized fun load(): XiaomiSession? {
+        if (!loaded) {
+            cachedSession = runCatching { store.get("session")?.let(XiaomiSession::fromJson) }.getOrNull()
+            loaded = true
+        }
+        // isUsable still evaluates the current time; caching never extends token lifetime.
+        return cachedSession
+    }
+    @Synchronized fun save(session: XiaomiSession) {
         check(session.isUsable) { "超级小爱登录信息不可用，请先在小爱中完成登录" }
         store.put("session", session.toJson())
+        cachedSession = session
+        loaded = true
         sessionChanges.update { it + 1 }
     }
-    fun clear() {
+    @Synchronized fun saveImported(imported: XiaomiSession): XiaomiSession {
+        check(imported.isUsable) { "系统小爱登录信息已过期，请重新登录小爱后导入" }
+        return mergeXiaomiSessions(load(), imported).also(::save)
+    }
+
+    @Synchronized fun clear() {
         store.remove("session")
+        cachedSession = null
+        loaded = true
         sessionChanges.update { it + 1 }
     }
+}
+
+/** Importing expert credentials must preserve the same account's working web transport. */
+internal fun mergeXiaomiSessions(current: XiaomiSession?, imported: XiaomiSession): XiaomiSession {
+    if (current?.independentDevice != true || !current.isUsable || current.userId.isBlank() ||
+        current.userId != imported.userId) return imported
+    return XiaomiSession(current.accessToken, current.deviceId, current.expiresAtSeconds,
+        expertToken = imported.expertToken, userId = current.userId, cUserId = imported.cUserId,
+        independentDevice = true, refreshToken = current.refreshToken)
 }
