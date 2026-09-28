@@ -13,9 +13,9 @@ internal object AutoPageDiagnostics {
     val enabled: Boolean
         get() = BuildConfig.AUTO_PAGE_DIAGNOSTICS
 
-    fun log(message: String) {
+    inline fun log(message: () -> String) {
         if (enabled) {
-            AppLog.i(TAG, "auto-debug uptime=${SystemClock.uptimeMillis()} $message")
+            AppLog.i(TAG, "auto-debug uptime=${SystemClock.uptimeMillis()} ${message()}")
         }
     }
 

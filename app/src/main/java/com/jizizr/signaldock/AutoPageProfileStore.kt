@@ -343,9 +343,11 @@ class AutoTriggerCoordinator {
     }
 
     @Synchronized
-    fun onSuccess(profileId: String) {
+    fun onResult(profileId: String, succeeded: Boolean): Boolean {
+        if (!succeeded) return false
         activeProfileId = profileId
         fired = true
+        return true
     }
 
     @Synchronized

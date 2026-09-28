@@ -26,6 +26,7 @@ data class AiRuntimeSettings(
     val connection: AiConnectionConfiguration,
     val transport: AiTransport = AiTransport.OPENAI_COMPATIBLE,
     val xiaoAiMode: XiaoAiMode = XiaoAiMode.FAST,
+    val providerName: String = "",
 )
 
 enum class AiTransport {
@@ -181,6 +182,7 @@ object AiSettingsStore {
             connection = resolveAiConnectionConfiguration(preset, customConfiguration),
             transport = preset.transport,
             xiaoAiMode = xiaoAiMode,
+            providerName = preset.name,
         )
     }
 

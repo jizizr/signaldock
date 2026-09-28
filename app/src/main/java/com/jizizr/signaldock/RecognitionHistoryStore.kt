@@ -75,6 +75,7 @@ object RecognitionHistoryStore {
         data: RustBridge.NotificationData,
         analysisDurationMs: Long,
         pageObservation: PageObservationSnapshot? = null,
+        providerName: String,
     ): RecognitionHistoryRecord {
         val createdAtMs = System.currentTimeMillis()
         val id = "$createdAtMs-${UUID.randomUUID()}"
@@ -102,7 +103,7 @@ object RecognitionHistoryStore {
                 screenshotHeight = screenshot.height,
                 sourcePackage = sourceSnapshot?.packageName.orEmpty(),
                 sourceTaskId = sourceSnapshot?.taskId ?: -1,
-                providerName = AiSettingsStore.selectedPreset.name,
+                providerName = providerName,
                 title = data.title,
                 body = data.body,
                 infoLines = data.infoLines,

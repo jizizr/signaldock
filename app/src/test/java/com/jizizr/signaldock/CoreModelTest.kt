@@ -559,7 +559,7 @@ class CoreModelTest {
         coordinator.reset()
         assertTrue(coordinator.canAttempt("profile", "first"))
         coordinator.onAttempt("profile", "first")
-        coordinator.onSuccess("profile")
+        coordinator.onResult("profile", succeeded = true)
         assertFalse(coordinator.canAttempt("profile", "changed"))
     }
 
