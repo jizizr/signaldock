@@ -50,7 +50,7 @@ object XiaomiRecognitionClient {
         check(!pickup || activeSession.independentDevice) {
             "取餐码渠道需要独立网页登录，请在 AI 设置中连接小米账号"
         }
-        val jpeg = Base64.decode(bitmap.toUploadJpegBase64(), Base64.DEFAULT)
+        val jpeg = bitmap.toUploadJpegBytes()
         val ua = userAgent(context)
         AppLog.i("XiaomiRecognition", "Starting ${if (pickup) "pickup" else mode.name} recognition")
         return if (!pickup && mode == XiaoAiMode.EXPERT) {

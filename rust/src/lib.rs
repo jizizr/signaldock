@@ -371,13 +371,16 @@ fn analyze_model_result(qr: QrResult, raw_text: &str) -> AnalysisResult {
 }
 
 fn user_facing_ai_error(error: &str) -> &'static str {
-    if error.contains("over capacity") || error.contains("503 Service Unavailable") {
+    if error.contains("over capacity")
+        || error.contains("503 Service Unavailable")
+        || error.contains("AI HTTP 503")
+    {
         "AI 服务繁忙，请稍后重试"
-    } else if error.contains("429 Too Many Requests") {
+    } else if error.contains("429 Too Many Requests") || error.contains("AI HTTP 429") {
         "请求过于频繁，请稍后重试"
-    } else if error.contains("401 Unauthorized") {
+    } else if error.contains("401 Unauthorized") || error.contains("AI HTTP 401") {
         "API Key 无效，请检查配置"
-    } else if error.contains("403 Forbidden") {
+    } else if error.contains("403 Forbidden") || error.contains("AI HTTP 403") {
         "当前模型无权访问"
     } else {
         "AI 识别暂时不可用"
@@ -708,6 +711,18 @@ mod tests {
             user_facing_ai_error("503 Service Unavailable: model is currently over capacity"),
             "AI 服务繁忙，请稍后重试"
         );
+    }
+
+    #[test]
+    fn maps_sanitized_http_status_to_actionable_errors() {
+        for (status, expected) in [
+            ("AI HTTP 401", "API Key 无效，请检查配置"),
+            ("AI HTTP 403", "当前模型无权访问"),
+            ("AI HTTP 429", "请求过于频繁，请稍后重试"),
+            ("AI HTTP 503", "AI 服务繁忙，请稍后重试"),
+        ] {
+            assert_eq!(user_facing_ai_error(status), expected);
+        }
     }
 
     #[test]

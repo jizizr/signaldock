@@ -29,11 +29,17 @@ internal fun Bitmap.toNativeScreenshot(): NativeScreenshot {
     return NativeScreenshot(width, height, rgba)
 }
 
-internal fun Bitmap.toJpegBase64(quality: Int): String =
+internal fun Bitmap.toJpegBytes(quality: Int): ByteArray =
     ByteArrayOutputStream().use { output ->
         check(compress(Bitmap.CompressFormat.JPEG, quality, output)) { "截图 JPEG 编码失败" }
-        Base64.encodeToString(output.toByteArray(), Base64.NO_WRAP)
+        output.toByteArray()
     }
+
+internal fun Bitmap.toJpegBase64(quality: Int): String =
+    Base64.encodeToString(toJpegBytes(quality), Base64.NO_WRAP)
+
+internal fun Bitmap.toUploadJpegBytes(maxSide: Int = 1600, quality: Int = 50): ByteArray =
+    withUploadSize(maxSide) { it.toJpegBytes(quality) }
 
 internal fun Bitmap.toUploadJpegBase64(
     maxSide: Int = 1600,

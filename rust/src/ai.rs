@@ -293,6 +293,25 @@ fn chat_completions_url(base_url: &str) -> String {
     }
 }
 
+const MAX_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
+
+async fn bounded_response_text(mut response: reqwest::Response) -> Result<String, AiError> {
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|error| AiError::Client(format!("AI response read failed: {error}")))?
+    {
+        if chunk.len() > MAX_RESPONSE_BYTES - bytes.len() {
+            return Err(AiError::InvalidResponse(
+                "response exceeds size limit".into(),
+            ));
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    String::from_utf8(bytes).map_err(|_| AiError::InvalidResponse("response is not UTF-8".into()))
+}
+
 fn assistant_text_from_response(response: &str) -> Result<String, AiError> {
     let envelope: serde_json::Value = serde_json::from_str(response)?;
     envelope
@@ -359,8 +378,14 @@ pub async fn analyze_screenshot_with_ai(
     let mut attempt = 1;
     let response_text = loop {
         log::info!("AI 请求: model={}, attempt={}/2", model_id, attempt);
+        // Keep all attempts inside the recognizing notification's lifetime.
+        let remaining = Duration::from_secs(110).saturating_sub(ai_start.elapsed());
+        if remaining.is_zero() {
+            return Err(AiError::Client("AI request timed out".into()));
+        }
         let response = match client
             .post(&url)
+            .timeout(remaining.min(Duration::from_secs(90)))
             .bearer_auth(api_key)
             .json(&body)
             .send()
@@ -376,12 +401,8 @@ pub async fn analyze_screenshot_with_ai(
             Err(error) => return Err(AiError::Client(format!("AI request failed: {error}"))),
         };
         let status = response.status();
-        let text = response
-            .text()
-            .await
-            .map_err(|error| AiError::Client(format!("AI response read failed: {error}")))?;
         if status.is_success() {
-            break text;
+            break bounded_response_text(response).await?;
         }
         if attempt == 1 && (status.as_u16() == 429 || status.is_server_error()) {
             log::warn!("AI HTTP {}, retrying once", status.as_u16());
@@ -389,12 +410,8 @@ pub async fn analyze_screenshot_with_ai(
             tokio::time::sleep(Duration::from_secs(2)).await;
             continue;
         }
-        let preview: String = text.chars().take(300).collect();
-        return Err(AiError::Client(format!(
-            "AI HTTP {}: {}",
-            status.as_u16(),
-            preview
-        )));
+        // Error bodies may echo credentials or screenshots; keep only the status code.
+        return Err(AiError::Client(format!("AI HTTP {}", status.as_u16())));
     };
     log::info!("AI 请求耗时: {}ms", ai_start.elapsed().as_millis());
 
@@ -452,6 +469,52 @@ mod tests {
 
     const BASE_URL: &str = "https://api.groq.com/openai/v1";
     const MODEL_ID: &str = "qwen/qwen3.6-27b";
+
+    async fn local_response(body: Vec<u8>) -> reqwest::Response {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            let (mut connection, _) = listener.accept().unwrap();
+            connection
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut request = [0u8; 4096];
+            let _ = connection.read(&mut request);
+            // No Content-Length: the client must enforce its limit during reads.
+            let _ = connection.write_all(b"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n");
+            let _ = connection.write_all(&body);
+        });
+        shared_http_client()
+            .unwrap()
+            .get(format!("http://{address}/"))
+            .send()
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn response_reader_preserves_utf8_and_bounds_unknown_length_bodies() {
+        let response = local_response("取餐码 0076".as_bytes().to_vec()).await;
+        assert_eq!(
+            bounded_response_text(response).await.unwrap(),
+            "取餐码 0076"
+        );
+        let response = local_response(vec![b'a'; MAX_RESPONSE_BYTES + 1]).await;
+        assert!(matches!(
+            bounded_response_text(response).await,
+            Err(AiError::InvalidResponse(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn response_reader_rejects_invalid_utf8() {
+        let response = local_response(vec![0xff]).await;
+        assert!(matches!(
+            bounded_response_text(response).await,
+            Err(AiError::InvalidResponse(_))
+        ));
+    }
 
     #[test]
     fn parses_price_and_contextual_action() {
