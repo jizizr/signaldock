@@ -5,6 +5,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.lifecycle.lifecycleScope
 import androidx.compose.foundation.background
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Box
@@ -34,6 +35,11 @@ import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.extended.Close
 import top.yukonga.miuix.kmp.theme.MiuixTheme
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 
 /**
  * QrResultActivity
@@ -41,6 +47,8 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
  * 超级岛下拉小窗及普通通知按钮共用的二维码全页面。
  */
 class QrResultActivity : ComponentActivity() {
+    private var sourceNavigationPending = false
+    private var navigationFallback: Job? = null
 
     companion object {
         private const val TAG = "QrResultActivity"
@@ -48,6 +56,7 @@ class QrResultActivity : ComponentActivity() {
         const val EXTRA_SESSION_ID = "qr_result_session_id"
         const val EXTRA_SOURCE_PACKAGE = "qr_result_source_package"
         const val EXTRA_SOURCE_TASK_ID = "qr_result_source_task_id"
+        const val EXTRA_OPEN_SOURCE_ON_CLICK = "qr_result_open_source_on_click"
         const val MODE_IMAGE = "image"
         const val MODE_OPEN_SOURCE = "open_source"
     }
@@ -59,19 +68,42 @@ class QrResultActivity : ComponentActivity() {
         if (!isChangingConfigurations) finish()
     }
 
+    override fun onEnterAnimationComplete() {
+        super.onEnterAnimationComplete()
+        navigateAfterIslandTransition("animation_complete")
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (sourceNavigationPending && navigationFallback == null) {
+            // Some OEM/no-animation launches omit the callback. One bounded fallback,
+            // scoped to this visible Activity, never a notification renewal loop.
+            navigationFallback = lifecycleScope.launch {
+                delay(1_200)
+                navigateAfterIslandTransition("animation_fallback")
+            }
+        }
+    }
+
+    private fun navigateAfterIslandTransition(reason: String) {
+        if (!sourceNavigationPending || isFinishing || isDestroyed) return
+        sourceNavigationPending = false
+        navigationFallback?.cancel()
+        navigationFallback = null
+        AppLog.i(TAG, "Source navigation ready: reason=$reason")
+        openSourceApplication()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
         val sessionId = intent.getIntExtra(EXTRA_SESSION_ID, -1)
-        // 只读不删；bitmap 生命周期跟随通知，由 LiveUpdateService 统一回收
-        val bitmap = if (sessionId != -1) SessionQrBitmapStore.bitmapFor(sessionId) else null
         val mode = intent.getStringExtra(EXTRA_MODE)
 
         AppLog.i(
             TAG,
-            "Opened: session=$sessionId mode=$mode multiWindow=$isInMultiWindowMode " +
-                "hasQr=${bitmap != null}",
+            "Opened: session=$sessionId mode=$mode multiWindow=$isInMultiWindowMode",
         )
 
         if (mode != MODE_IMAGE && mode != MODE_OPEN_SOURCE) {
@@ -79,10 +111,19 @@ class QrResultActivity : ComponentActivity() {
         }
         // 无二维码时没有下拉内容，任何启动方式都应恢复来源应用。二维码模式下，
         // 普通点击恢复来源应用，只有系统的小窗启动才展示二维码。
-        if (mode == MODE_OPEN_SOURCE || !isInMultiWindowMode) {
-            openSourceApplication()
+        if (shouldOpenIslandSource(
+                mode = mode,
+                isInMultiWindowMode = isInMultiWindowMode,
+                openSourceOnClick = intent.getBooleanExtra(EXTRA_OPEN_SOURCE_ON_CLICK, false),
+            )
+        ) {
+            // Let HyperOS register the entered Activity before we leave it. Jumping
+            // during onCreate can deliver ExitApp before the island's EnterApp state.
+            sourceNavigationPending = true
             return
         }
+        // The page owns its snapshot; clearing the notification must not recycle a displayed image.
+        val bitmap = SessionQrBitmapStore.copyForSession(sessionId)
         // 只有下拉小窗需要二维码内容；没有二维码时直接关闭空白小窗。
         if (bitmap == null) {
             finish()
@@ -147,21 +188,32 @@ class QrResultActivity : ComponentActivity() {
     }
 
     private fun openSourceApplication() {
-        val sourceTaskId = intent.getIntExtra(EXTRA_SOURCE_TASK_ID, -1)
-        if (AppShell.startActivityFromRecents(sourceTaskId)) {
-            AppLog.i(TAG, "Restored source task: taskId=$sourceTaskId")
+        lifecycleScope.launch {
+            val sourceTaskId = intent.getIntExtra(EXTRA_SOURCE_TASK_ID, -1)
+            val restored = withContext(Dispatchers.IO) {
+                AppShell.startActivityFromRecents(sourceTaskId)
+            }
+            if (!restored && !isFinishing) {
+                val sourcePackage = intent.getStringExtra(EXTRA_SOURCE_PACKAGE)
+                runCatching {
+                    val launchIntent = sourcePackage
+                        ?.let(packageManager::getLaunchIntentForPackage)
+                        ?: Intent(this@QrResultActivity, MainActivity::class.java)
+                    launchIntent.addFlags(
+                        Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED,
+                    )
+                    startActivity(launchIntent)
+                }.onFailure { AppLog.w(TAG, "Unable to open source application", it) }
+            }
+            AppLog.i(TAG, "Source navigation completed: session=${intent.getIntExtra(EXTRA_SESSION_ID, -1)} restoredTask=$restored")
             finish()
-            return
         }
-        val sourcePackage = intent.getStringExtra(EXTRA_SOURCE_PACKAGE)
-        val launchIntent = sourcePackage
-            ?.let(packageManager::getLaunchIntentForPackage)
-            ?: Intent(this, MainActivity::class.java)
-        launchIntent.addFlags(
-            Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED,
-        )
-        AppLog.i(TAG, "Launching source package: package=$sourcePackage")
-        startActivity(launchIntent)
-        finish()
     }
 }
+
+internal fun shouldOpenIslandSource(
+    mode: String?,
+    isInMultiWindowMode: Boolean,
+    openSourceOnClick: Boolean,
+): Boolean = mode == QrResultActivity.MODE_OPEN_SOURCE ||
+    (mode == QrResultActivity.MODE_IMAGE && openSourceOnClick && !isInMultiWindowMode)

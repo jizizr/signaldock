@@ -82,7 +82,7 @@ object RecognitionHistoryStore {
         val temporaryDirectory = File(root, ".$id.tmp")
         val finalDirectory = File(root, id)
         val sourceSnapshot = SourceIconCache.snapshotForHistory(sessionId)
-        val qrBitmap = SessionQrBitmapStore.copyForHistory(sessionId)
+        val qrBitmap = SessionQrBitmapStore.copyForSession(sessionId)
 
         return try {
             temporaryDirectory.mkdirs()

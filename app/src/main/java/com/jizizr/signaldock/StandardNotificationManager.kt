@@ -38,10 +38,14 @@ object StandardNotificationManager : SessionNotificationManager {
         sessionId: Int,
         result: SessionNotificationResult,
         dismissIntent: PendingIntent,
-        publishDecision: ((notifId: Int, notif: Notification) -> ResultNotificationPublishDecision)?,
+        publisher: SessionNotificationPublisher?,
     ) {
-        context.getSystemService(NotificationManager::class.java)
-            .notify(sessionId, buildResultNotif(context, sessionId, result, dismissIntent))
+        val notification = buildResultNotif(context, sessionId, result, dismissIntent)
+        if (publisher != null) {
+            publisher(sessionId, notification, false)
+        } else {
+            context.getSystemService(NotificationManager::class.java).notify(sessionId, notification)
+        }
     }
 
     override fun transferForeground(
@@ -78,6 +82,7 @@ object StandardNotificationManager : SessionNotificationManager {
     private fun buildRecognizingNotif(context: Context, sessionId: Int): Notification {
         val stopPi = makeDismissPendingIntent(context, sessionId)
         return Notification.Builder(context, CHANNEL_ID)
+            .setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
             .setContentTitle("正在识别")
             .setContentText("截图分析中，请稍候…")
             .setShortCriticalText("识别中")

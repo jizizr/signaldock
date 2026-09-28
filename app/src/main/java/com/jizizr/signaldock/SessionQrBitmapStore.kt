@@ -1,17 +1,18 @@
 package com.jizizr.signaldock
 
 import android.graphics.Bitmap
-import java.util.concurrent.ConcurrentHashMap
 
 /** Owns QR bitmap lifecycles without sending large image data through Binder. */
 internal object SessionQrBitmapStore {
-    private val pending = ConcurrentHashMap<Int, Bitmap>()
-    private val active = ConcurrentHashMap<Int, Bitmap>()
+    private val pending = mutableMapOf<Int, Bitmap>()
+    private val active = mutableMapOf<Int, Bitmap>()
 
+    @Synchronized
     fun stage(sessionId: Int, bitmap: Bitmap) {
-        pending.put(sessionId, bitmap)?.recycleSafely()
+        pending.put(sessionId, bitmap)?.takeUnless { it === bitmap }?.recycleSafely()
     }
 
+    @Synchronized
     fun promote(sessionId: Int): Boolean {
         val bitmap = pending.remove(sessionId) ?: return active.containsKey(sessionId)
         active.put(sessionId, bitmap)
@@ -20,9 +21,9 @@ internal object SessionQrBitmapStore {
         return true
     }
 
-    fun bitmapFor(sessionId: Int): Bitmap? = active[sessionId]
-
-    fun copyForHistory(sessionId: Int): Bitmap? = (pending[sessionId] ?: active[sessionId])
+    /** Callers own the copy; the stored bitmap never escapes its lifecycle lock. */
+    @Synchronized
+    fun copyForSession(sessionId: Int): Bitmap? = (pending[sessionId] ?: active[sessionId])
         ?.let { bitmap ->
             runCatching {
                 bitmap.takeUnless(Bitmap::isRecycled)
@@ -30,6 +31,7 @@ internal object SessionQrBitmapStore {
             }.getOrNull()
         }
 
+    @Synchronized
     fun remove(sessionId: Int) {
         val pendingBitmap = pending.remove(sessionId)
         val activeBitmap = active.remove(sessionId)
@@ -39,6 +41,7 @@ internal object SessionQrBitmapStore {
             ?.recycleSafely()
     }
 
+    @Synchronized
     fun clear() {
         val bitmaps = buildSet {
             addAll(pending.values)

@@ -47,6 +47,7 @@ object SourceIconCache {
 
     private val entries = ConcurrentHashMap<Int, Entry>()
 
+    @Synchronized
     fun putSource(sessionId: Int, packageName: String?) {
         if (packageName == null) return
         entries.compute(sessionId) { _, current ->
@@ -55,6 +56,7 @@ object SourceIconCache {
         }
     }
 
+    @Synchronized
     fun put(
         sessionId: Int,
         packageName: String?,
@@ -74,15 +76,19 @@ object SourceIconCache {
         AppLog.i(TAG, "session=$sessionId package=$packageName source=$source taskId=$taskId")
     }
 
+    @Synchronized
     fun iconFor(sessionId: Int): Icon? = entries[sessionId]
         ?.bitmap
         ?.takeUnless(Bitmap::isRecycled)
+        // Notification extras outlive this cache entry, including while Binder parcels them.
+        ?.copy(Bitmap.Config.ARGB_8888, false)
         ?.let(Icon::createWithBitmap)
 
     fun packageNameFor(sessionId: Int): String? = entries[sessionId]?.packageName
 
     fun taskIdFor(sessionId: Int): Int? = entries[sessionId]?.taskId
 
+    @Synchronized
     fun snapshotForHistory(sessionId: Int): SourceIconHistorySnapshot? = entries[sessionId]
         ?.let { entry ->
             SourceIconHistorySnapshot(
@@ -96,6 +102,7 @@ object SourceIconCache {
             )
         }
 
+    @Synchronized
     fun restoreFromHistory(
         sessionId: Int,
         packageName: String?,
@@ -108,10 +115,12 @@ object SourceIconCache {
         }
     }
 
+    @Synchronized
     fun remove(sessionId: Int) {
         entries.remove(sessionId)?.bitmap?.recycle()
     }
 
+    @Synchronized
     fun clear() {
         entries.values.forEach { it.bitmap?.recycle() }
         entries.clear()

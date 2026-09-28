@@ -8,7 +8,9 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.drawable.Icon
 import android.os.Bundle
+import android.os.SystemClock
 import org.json.JSONObject
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -21,8 +23,6 @@ import java.util.concurrent.atomic.AtomicInteger
  */
 internal const val RECOGNIZING_SYSTEM_ICON_KEY = "xiaoai_thinking"
 internal const val RECOGNIZING_SYSTEM_ICON_TYPE = 7
-internal const val RECOGNIZING_ISLAND_PROPERTY = 0
-internal const val RESULT_ISLAND_PROPERTY = 1
 internal const val ISLAND_FIRST_FLOAT = false
 internal const val RESULT_ISLAND_NARROW_FONT = true
 
@@ -37,15 +37,6 @@ internal fun recognizingIslandPicSpec(): IslandPicSpec = IslandPicSpec(
     key = RECOGNIZING_SYSTEM_ICON_KEY,
     autoplay = true,
 )
-
-/**
- * HyperOS treats property 0 as a one-shot/temporary island:
- * it is deliberately excluded from the notification shade and a later
- * property-0 island replaces the previous temporary island. Recognition
- * uses that behavior; completed results must use the persistent property.
- */
-internal fun islandPropertyFor(statusOnly: Boolean): Int =
-    if (statusOnly) RECOGNIZING_ISLAND_PROPERTY else RESULT_ISLAND_PROPERTY
 
 private fun IslandPicSpec.toJson(): JSONObject = JSONObject().apply {
     put("type", type)
@@ -129,19 +120,16 @@ object SuperIslandManager : SessionNotificationManager {
     }
 
     /** Enqueue a notification while the XMSF network is briefly blocked. */
-    private fun withBypass(context: Context, block: () -> Unit) {
-        if (SuperIslandSettingsStore.networkBypassMode == NetworkBypassMode.DISABLED) {
-            block()
-            return
-        }
-        val uid = getXmsfUid(context)
-        if (uid == -1) {
-            AppLog.w(TAG, "withBypass: failed to get xmsf uid, skipping bypass")
-            block()
-            return
-        }
+    private val recognizingPostedAt = ConcurrentHashMap<Int, Long>()
+
+    private fun withBypass(context: Context, beforePublish: () -> Unit = {}, block: () -> Unit) {
         bypassExecutor.execute {
-            executeBypass(uid, block)
+            // Serialize both paths, including when the network workaround is disabled.
+            // Wait before blocking XMSF so the visibility interval does not extend that block.
+            beforePublish()
+            val uid = if (SuperIslandSettingsStore.networkBypassMode == NetworkBypassMode.DISABLED) -1
+                else getXmsfUid(context)
+            if (uid == -1) block() else executeBypass(uid, block)
         }
     }
 
@@ -238,10 +226,10 @@ object SuperIslandManager : SessionNotificationManager {
      * @param keyText    小岛右侧文本 + hintInfo 主要文本（如取餐号、识别结果）
      * @param ongoing    是否为持续性通知
      * @param updatable  是否可更新
-     * @param islandTimeout 岛自动消失时间（秒）
+     * @param lifetime 岛超时（秒）和焦点通知超时（分钟），不可混用
      * @param actionTitle 按钮组件3 操作按钮文字，空则不显示按钮
      */
-    private fun buildIslandNotification(
+    internal fun buildIslandNotification(
         context: Context,
         title: String,
         content: String,
@@ -253,7 +241,7 @@ object SuperIslandManager : SessionNotificationManager {
         merchant: String = "",
         ongoing: Boolean = false,
         updatable: Boolean = true,
-        islandTimeout: Int = 60,
+        lifetime: IslandLifetime = TEST_ISLAND_LIFETIME,
         expandedTime: Int = 0,      // 展开态保持时间（秒），0=立即收起
         actionTitle: String = "",
         actionPendingIntent: PendingIntent? = null,    // 下层文字按钮 PendingIntent（如"已完成"）
@@ -400,13 +388,11 @@ object SuperIslandManager : SessionNotificationManager {
         }
 
         val paramIsland = JSONObject().apply {
-            // Recognition is a temporary MemoryIsland-style record. Completed
-            // results are persistent records so HyperOS keeps them in the
-            // notification shade and does not let the next result delete them
-            // through ShowOnceIslandHandler.
+            // A pickup result is operation-oriented; recognition is transient.
             put("islandProperty", islandPropertyFor(statusOnly))
-            put("islandPriority", if (statusOnly) 0 else 2)
-            put("islandTimeout", islandTimeout)
+            // A new recognition must also be visible while an earlier result is pinned.
+            put("islandPriority", 2)
+            put("islandTimeout", lifetime.islandSeconds)
             if (statusOnly) {
                 // Xiaomi memory island hard-codes this to 5s. It is the transition
                 // budget used by the one-shot island, not a request to open it.
@@ -437,7 +423,7 @@ object SuperIslandManager : SessionNotificationManager {
             // still be expanded by the user because its baseInfo/hintInfo are
             // present; this flag only suppresses SystemUI's automatic first-float
             // expansion when the result record is posted.
-            put("enableFloat", true)
+            put("enableFloat", false)
             put("updatable", if (statusOnly) false else updatable)
             put("islandFirstFloat", ISLAND_FIRST_FLOAT)
 
@@ -453,7 +439,7 @@ object SuperIslandManager : SessionNotificationManager {
                     put("outEffectSrc", "outer_glow")
                 }
                 put("isShowNotification", true)
-                put("timeout", islandTimeout)
+                put("timeout", lifetime.notificationMinutes)
                 put("baseInfo", baseInfo)       // 商品名 + 商家 + 展开态规格
                 put("picInfo", expandPicInfo)   // 右侧商家 Logo
                 put("hintInfo", hintInfo)       // 取餐码 + 价格标签 + 完成按钮
@@ -499,11 +485,16 @@ object SuperIslandManager : SessionNotificationManager {
         }
 
         return Notification.Builder(context, CHANNEL_ID)
+            // The default FGS policy can defer first publication by several seconds.
+            // That also outlives the XMSF bypass window and lets a fast result replace
+            // the recognizing island before SystemUI has ever received it.
+            .setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(title)
             .setContentText(content)
             .setOngoing(ongoing)
             .setAutoCancel(false)
+            .setTimeoutAfter(lifetime.notificationMillis)
             .addExtras(extras)
             .also { if (contentPendingIntent != null) it.setContentIntent(contentPendingIntent) }
             .also { if (deleteIntent != null) it.setDeleteIntent(deleteIntent) }
@@ -593,8 +584,8 @@ object SuperIslandManager : SessionNotificationManager {
             },
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
+        recognizingPostedAt[sessionId] = 0L
         withBypass(context) {
-            val nm = context.getSystemService(NotificationManager::class.java)
             val notification = buildIslandNotification(
                 context = context,
                 title = "识别中",
@@ -603,14 +594,13 @@ object SuperIslandManager : SessionNotificationManager {
                 keyText = "识别中",
                 ongoing = false,
                 updatable = true,
-                islandTimeout = 120,
+                lifetime = RECOGNIZING_ISLAND_LIFETIME,
                 expandedTime = 0,
                 deleteIntent = dismissPI,
-                sourceIcon = SourceIconCache.iconFor(sessionId),
                 statusOnly = true,
             )
-            nm.notify(islandId, notification)
             onForegroundReady(islandId, notification)
+            recognizingPostedAt.computeIfPresent(sessionId) { _, _ -> SystemClock.elapsedRealtime() }
             AppLog.i(TAG, "Recognizing island sent for session $sessionId (id=$islandId)")
         }
     }
@@ -620,7 +610,7 @@ object SuperIslandManager : SessionNotificationManager {
         sessionId: Int,
         result: SessionNotificationResult,
         dismissIntent: PendingIntent,
-        publishDecision: ((notifId: Int, notif: Notification) -> ResultNotificationPublishDecision)?,
+        publisher: SessionNotificationPublisher?,
     ) {
         val content = result.details.ifBlank { result.title }.ifBlank { "无内容" }
         sendResultIsland(
@@ -629,7 +619,7 @@ object SuperIslandManager : SessionNotificationManager {
             result = result,
             content = content,
             dismissPendingIntent = dismissIntent,
-            publishDecision = publishDecision,
+            publisher = publisher,
         )
     }
 
@@ -648,11 +638,13 @@ object SuperIslandManager : SessionNotificationManager {
     }
 
     override fun cancelForSession(context: Context, sessionId: Int) {
+        recognizingPostedAt.remove(sessionId)
         context.getSystemService(NotificationManager::class.java)
             .cancel(notificationIdForSession(sessionId))
     }
 
     override fun onServiceDestroy(context: Context) {
+        recognizingPostedAt.clear()
         val uid = blockedUid
         if (networkBlockActive.get() && uid != -1) {
             bypassExecutor.execute { restoreXmsfNetworking(uid) }
@@ -671,10 +663,16 @@ object SuperIslandManager : SessionNotificationManager {
         result: SessionNotificationResult,
         content: String,
         dismissPendingIntent: PendingIntent? = null,
-        publishDecision: ((notifId: Int, notif: Notification) -> ResultNotificationPublishDecision)? = null,
+        publisher: SessionNotificationPublisher? = null,
     ) {
         val islandId = islandIdForSession(sessionId)
-        withBypass(context) {
+        withBypass(context, beforePublish = {
+            val postedAt = recognizingPostedAt.remove(sessionId)
+            if (postedAt != null && postedAt > 0L) {
+                val delay = recognizingRemainingDisplayMs(postedAt, SystemClock.elapsedRealtime())
+                if (delay > 0) SystemClock.sleep(delay)
+            }
+        }) {
             val displayTitle = result.title.ifBlank { "截图分析" }
             val displayContent = content.ifBlank { "无内容" }
             val nm = context.getSystemService(NotificationManager::class.java)
@@ -702,6 +700,7 @@ object SuperIslandManager : SessionNotificationManager {
                         },
                     )
                     putExtra(QrResultActivity.EXTRA_SESSION_ID, sessionId)
+                    putExtra(QrResultActivity.EXTRA_OPEN_SOURCE_ON_CLICK, true)
                     putExtra(
                         QrResultActivity.EXTRA_SOURCE_PACKAGE,
                         SourceIconCache.packageNameFor(sessionId) ?: context.packageName,
@@ -727,7 +726,7 @@ object SuperIslandManager : SessionNotificationManager {
                 merchant = result.merchant,
                 ongoing = true,
                 updatable = true,
-                islandTimeout = 300,
+                lifetime = RESULT_ISLAND_LIFETIME,
                 actionTitle = result.actionText.ifBlank { "已完成" },
                 actionPendingIntent = dismissPendingIntent,
                 // 普通点击始终进入来源应用；有二维码时，向下拖动由系统将同一 Activity
@@ -743,29 +742,19 @@ object SuperIslandManager : SessionNotificationManager {
                 dragShareDescription = share.description.ifBlank { displayTitle },
                 dragShareContent = share.content.ifBlank { displayContent },
             )
-            // HyperOS reuses the old DynamicIslandContentView for an in-place
-            // update and copies its measured left/right widths into the new
-            // template. A normal cancel() cannot remove a notification that is
-            // currently the foreground-service anchor, so the service supplies
-            // a stopForeground(STOP_FOREGROUND_REMOVE) -> startForeground()
-            // callback for that case. Non-FGS/replayed records use the ordinary
-            // cancel -> notify fallback. Both paths keep the same notification ID.
-            val publishOutcome = when (publishDecision?.invoke(islandId, notification)) {
-                ResultNotificationPublishDecision.DROP -> {
-                    AppLog.d(TAG, "Dropping result for inactive session $sessionId")
-                    ResultNotificationPublishDecision.DROP
-                }
-                ResultNotificationPublishDecision.FOREGROUND_REPOSTED ->
-                    ResultNotificationPublishDecision.FOREGROUND_REPOSTED
-                ResultNotificationPublishDecision.NORMAL_REPOST,
-                null -> {
-                    nm.cancel(islandId)
-                    nm.notify(islandId, notification)
-                    ResultNotificationPublishDecision.NORMAL_REPOST
-                }
+            // Only the recognition -> result template transition needs a fresh record.
+            // The service performs the replacement atomically with session validation.
+            val published = if (publisher != null) {
+                publisher(islandId, notification, true)
+            } else {
+                nm.cancel(islandId)
+                nm.notify(islandId, notification)
+                true
             }
-            if (publishOutcome != ResultNotificationPublishDecision.DROP) {
+            if (published) {
                 AppLog.i(TAG, "Result island sent for session $sessionId (id=$islandId)")
+            } else {
+                AppLog.d(TAG, "Dropping result for inactive session $sessionId")
             }
         }
     }

@@ -4,6 +4,9 @@ import android.app.Notification
 import android.app.PendingIntent
 import android.content.Context
 
+/** Publishes under the service's lifecycle lock; false means the session was cleared. */
+typealias SessionNotificationPublisher = (notificationId: Int, notification: Notification, replaceExisting: Boolean) -> Boolean
+
 data class SessionNotificationResult(
     val title: String,
     val details: String,
@@ -56,16 +59,15 @@ interface SessionNotificationManager {
     /**
      * 发送/更新结果通知（允许异步）。
      *
-     * [publishDecision] 由需要在真正投递结果时判断通知生命周期的提供器调用。
-     * 它可以丢弃已结束的会话、执行普通 cancel → notify，或由前台服务完成
-     * stopForeground → startForeground。标准通知提供器不需要使用它。
+     * [publisher] 在真正投递时检查会话并完成投递，避免检查与 notify 之间被清理。
+     * 未提供时按普通通知发送（历史记录重新上岛）。
      */
     fun sendResultNotification(
         context: Context,
         sessionId: Int,
         result: SessionNotificationResult,
         dismissIntent: PendingIntent,
-        publishDecision: ((notifId: Int, notif: Notification) -> ResultNotificationPublishDecision)? = null,
+        publisher: SessionNotificationPublisher? = null,
     )
 
     /**

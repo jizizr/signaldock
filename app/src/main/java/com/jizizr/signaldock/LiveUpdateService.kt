@@ -1,5 +1,7 @@
 ﻿package com.jizizr.signaldock
 
+import android.app.Notification
+import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
@@ -98,37 +100,45 @@ class LiveUpdateService : Service() {
                     // Invalidate the session before cancelling its notification. A queued
                     // result that reaches the publisher concurrently will then be dropped;
                     // if it already published, the following cancellation removes it.
-                    activeSessions.remove(sessionId)
+                    synchronized(foregroundLock) {
+                        activeSessions.remove(sessionId)
+                        if (foregroundSessionId == provider.notificationIdForSession(sessionId)) {
+                            // cancel() cannot remove the current FGS anchor. Detach it first.
+                            stopForeground(Service.STOP_FOREGROUND_REMOVE)
+                            foregroundSessionId = -1
+                            isForeground = false
+                        }
+                        provider.cancelForSession(this, sessionId)
+                    }
                     val releasedAutoLock = AutoPageNotificationLockStore.releaseBySession(sessionId)
-                    provider.cancelForSession(this, sessionId)
                     SessionQrBitmapStore.remove(sessionId)
                     SourceIconCache.remove(sessionId)
                     releasedAutoLock?.let { lock ->
                         AccessibilityScreenshotService.instance
                             ?.onAutoNotificationReleased(lock.profileId, lock.notificationId)
                     }
-                    val notifId = provider.notificationIdForSession(sessionId)
                     if (activeSessions.isEmpty()) {
                         synchronized(foregroundLock) {
                             foregroundSessionId = -1
                             isForeground = false
                         }
                         stopForeground(Service.STOP_FOREGROUND_REMOVE)
-                        stopSelf()
-                    } else if (foregroundSessionId == notifId) {
+                        stopSelf(startId)
+                    } else if (!isForeground) {
                         val nextSession = activeSessions.keys().nextElement()
                         synchronized(foregroundLock) {
                             foregroundSessionId = -1
                         }
                         provider.transferForeground(this, nextSession) { id, notif ->
                             synchronized(foregroundLock) {
-                                if (activeSessions.containsKey(nextSession)) {
+                                if (!isForeground && activeSessions.containsKey(nextSession)) {
                                     foregroundSessionId = id
                                     startForeground(
                                         id,
                                         notif,
                                         ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE,
                                     )
+                                    isForeground = true
                                 }
                             }
                         }
@@ -144,14 +154,18 @@ class LiveUpdateService : Service() {
                 activeSessions[sessionId] = Unit
                 provider.sendRecognizingNotification(this, sessionId) { notifId, notif ->
                     synchronized(foregroundLock) {
-                        if (activeSessions.containsKey(sessionId) && !isForeground) {
-                            foregroundSessionId = notifId
-                            startForeground(
-                                notifId,
-                                notif,
-                                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE,
-                            )
-                            isForeground = true
+                        if (activeSessions.containsKey(sessionId)) {
+                            if (!isForeground) {
+                                foregroundSessionId = notifId
+                                startForeground(
+                                    notifId,
+                                    notif,
+                                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE,
+                                )
+                                isForeground = true
+                            } else {
+                                getSystemService(NotificationManager::class.java).notify(notifId, notif)
+                            }
                         }
                     }
                 }
@@ -192,52 +206,46 @@ class LiveUpdateService : Service() {
                         hasQrBitmap = hasBitmap,
                     ),
                     makeDismissPendingIntent(sessionId),
-                    publishDecision = { notifId, notif ->
-                        synchronized(foregroundLock) {
-                            when (
-                                resultNotificationPublishDecision(
-                                    isForeground = isForeground,
-                                    foregroundSessionId = foregroundSessionId,
-                                    notificationId = notifId,
-                                    activeSession = activeSessions.containsKey(sessionId),
-                                )
-                            ) {
-                                ResultNotificationPublishDecision.DROP -> {
-                                    AppLog.d(TAG, "Dropping queued result for inactive session $sessionId")
-                                    ResultNotificationPublishDecision.DROP
-                                }
-                                ResultNotificationPublishDecision.NORMAL_REPOST ->
-                                    ResultNotificationPublishDecision.NORMAL_REPOST
-                                ResultNotificationPublishDecision.FOREGROUND_REPOSTED -> {
-                                    // NotificationManager.cancel() is not allowed to
-                                    // remove the notification anchoring this FGS. Use
-                                    // the Service API so SystemUI receives a genuinely
-                                    // new record and remeasures the compact island.
-                                    stopForeground(Service.STOP_FOREGROUND_REMOVE)
-                                    startForeground(
-                                        notifId,
-                                        notif,
-                                        ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE,
-                                    )
-                                    isForeground = true
-                                    ResultNotificationPublishDecision.FOREGROUND_REPOSTED
-                                }
-                            }
-                        }
+                    publisher = { notifId, notif, replaceExisting ->
+                        publishResult(
+                            sessionId, notifId, notif, replaceExisting,
+                            intent.getStringExtra(EXTRA_AUTO_PROFILE_ID),
+                        )
                     },
                 )
-                intent.getStringExtra(EXTRA_AUTO_PROFILE_ID)
-                    ?.takeIf(String::isNotBlank)
-                    ?.let { profileId ->
-                        val notificationId = provider.notificationIdForSession(sessionId)
-                        AutoPageNotificationLockStore.lock(profileId, sessionId, notificationId)
-                        AccessibilityScreenshotService.instance
-                            ?.onAutoNotificationPublished(profileId, notificationId)
-                    }
             }
             else -> {}
         }
         return START_NOT_STICKY
+    }
+
+    private fun publishResult(
+        sessionId: Int,
+        notificationId: Int,
+        notification: Notification,
+        replaceExisting: Boolean,
+        autoProfileId: String?,
+    ): Boolean = synchronized(foregroundLock) {
+        val decision = resultNotificationPublishDecision(
+            isForeground, foregroundSessionId, notificationId, activeSessions.containsKey(sessionId),
+        )
+        if (decision == ResultNotificationPublishDecision.DROP) return@synchronized false
+        if (decision == ResultNotificationPublishDecision.FOREGROUND_REPOSTED) {
+            // HyperOS must remeasure the one-shot -> result template transition.
+            if (replaceExisting) stopForeground(Service.STOP_FOREGROUND_REMOVE)
+            startForeground(notificationId, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+        } else {
+            val manager = getSystemService(NotificationManager::class.java)
+            if (replaceExisting) manager.cancel(notificationId)
+            manager.notify(notificationId, notification)
+        }
+        autoProfileId?.takeIf(String::isNotBlank)?.let { profileId ->
+            // Lock only after a successful publication, never while still queued for bypass.
+            AutoPageNotificationLockStore.lock(profileId, sessionId, notificationId)
+            AccessibilityScreenshotService.instance
+                ?.onAutoNotificationPublished(profileId, notificationId)
+        }
+        true
     }
 
     override fun onDestroy() {
@@ -245,14 +253,18 @@ class LiveUpdateService : Service() {
         synchronized(foregroundLock) {
             isForeground = false
             foregroundSessionId = -1
+            activeSessions.keys.forEach { sessionId ->
+                provider.cancelForSession(this, sessionId)
+                SessionQrBitmapStore.remove(sessionId)
+                SourceIconCache.remove(sessionId)
+            }
+            activeSessions.clear()
         }
         // Do not release an auto-page lock here. A service restart is not a user
         // acknowledgement; the persisted lock is reconciled against active
         // notifications when the accessibility service reconnects.
-        activeSessions.keys.forEach { sessionId -> provider.cancelForSession(this, sessionId) }
-        activeSessions.clear()
-        SessionQrBitmapStore.clear()
-        SourceIconCache.clear()
+        // History replay notifications are independent of this service's active sessions.
+        // Do not clear their QR images or source icons when the last live session ends.
         super.onDestroy()
     }
 
