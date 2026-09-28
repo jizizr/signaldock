@@ -61,7 +61,7 @@
     <string name="ai_configuration_ready">已配置</string>
     <string name="ai_configuration_incomplete">请补全 API Key、Base URL 和 Model ID</string>
     <string name="xiaomi_configuration_incomplete">请在 AI 设置中连接超级小爱</string>
-    <string name="xiaomi_pickup_unavailable">取餐码渠道暂不可用，请选择超级小爱或自定义接口</string>
+    <string name="xiaomi_pickup_login_required">请在 AI 设置中通过小米官方网页登录连接取餐码识别</string>
     <string name="authorize">授权</string>
     <string name="add">添加</string>
     <string name="provider_preset">服务商预设</string>
@@ -230,4 +230,7 @@
     <string name="history_value_empty">未识别</string>
     <string name="yes">是</string>
     <string name="no">否</string>
+    <string name="saving">正在保存…</string>
+    <string name="base_url_invalid">请输入完整的 http:// 或 https:// 接口地址，不要包含账号、查询参数或片段。</string>
+    <string name="custom_model_save_failed">保存失败，请重试。当前配置未更改。</string>
 </resources>

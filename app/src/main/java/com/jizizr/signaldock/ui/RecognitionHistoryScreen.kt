@@ -16,6 +16,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.flow.collectLatest
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -86,10 +90,15 @@ internal fun RecognitionHistoryScreen(
     var refreshKey by remember { mutableIntStateOf(0) }
     var pendingDelete by remember { mutableStateOf<RecognitionHistoryRecord?>(null) }
     var replayingId by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(refreshKey) {
-        loading = true
-        records = withContext(Dispatchers.IO) { RecognitionHistoryStore.loadAll(context) }
-        loading = false
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(refreshKey, lifecycle) {
+        lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            RecognitionHistoryStore.changes.collectLatest {
+                loading = records.isEmpty()
+                records = withContext(Dispatchers.IO) { RecognitionHistoryStore.loadAll(context) }
+                loading = false
+            }
+        }
     }
 
     Scaffold(

@@ -11,6 +11,9 @@ import org.json.JSONObject
 import java.io.File
 import java.util.UUID
 import kotlin.math.sqrt
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 
 data class RecognitionHistoryRecord(
     val id: String,
@@ -55,6 +58,8 @@ internal fun recognitionHistorySummary(record: RecognitionHistoryRecord): String
 }
 
 object RecognitionHistoryStore {
+    private val historyChanges = MutableStateFlow(0L)
+    internal val changes = historyChanges.asStateFlow()
     private const val TAG = "RecognitionHistory"
     private const val DIRECTORY = "recognition_history"
     private const val RECORD_FILE = "record.json"
@@ -129,6 +134,7 @@ object RecognitionHistoryStore {
                 "Unable to finalize recognition history record"
             }
             synchronized(pruneLock) { prune(context) }
+            historyChanges.update { it + 1 }
             AppLog.i(TAG, "Saved history id=$id qr=$qrSaved sourceIcon=$sourceIconSaved")
             record
         } catch (error: Throwable) {
@@ -156,6 +162,7 @@ object RecognitionHistoryStore {
     fun delete(context: Context, id: String): Boolean {
         val directory = safeRecordDirectory(context, id) ?: return false
         val deleted = directory.deleteRecursively()
+        if (deleted) historyChanges.update { it + 1 }
         AppLog.i(TAG, "Deleted history id=$id success=$deleted")
         return deleted
     }

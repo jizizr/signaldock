@@ -1,6 +1,12 @@
 package com.jizizr.signaldock.ui
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -91,24 +97,35 @@ class AiSettingsState {
         apiKey = AiSettingsStore.apiKeyFor(preset.id)
     }
 
-    fun saveCustomConfiguration(
+    suspend fun saveCustomConfiguration(
         apiKey: String,
         baseUrl: String,
         modelId: String,
         reasoningEffort: String,
     ) {
+        withContext(Dispatchers.IO) {
+            AiSettingsStore.saveCustomConfiguration(
+                apiKey = apiKey,
+                baseUrl = baseUrl,
+                modelId = modelId,
+                reasoningEffort = reasoningEffort,
+            )
+        }
         this.apiKey = apiKey
         this.baseUrl = baseUrl
         this.modelId = modelId
         this.reasoningEffort = reasoningEffort
-        AiSettingsStore.saveCustomConfiguration(
-            apiKey = apiKey,
-            baseUrl = baseUrl,
-            modelId = modelId,
-            reasoningEffort = reasoningEffort,
-        )
     }
 }
 
 @Composable
-fun rememberAiSettingsState(): AiSettingsState = remember { AiSettingsState() }
+fun rememberAiSettingsState(): AiSettingsState {
+    val settings = remember { AiSettingsState() }
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(settings, lifecycle) {
+        lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            XiaomiSessionStore.changes.collect { settings.refreshXiaomiSession() }
+        }
+    }
+    return settings
+}

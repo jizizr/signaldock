@@ -11,6 +11,13 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import com.jizizr.signaldock.AiConnectionConfiguration
+import com.jizizr.signaldock.isAiConfigurationReady
+import com.jizizr.signaldock.isValidAiBaseUrl
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.launch
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -46,12 +53,18 @@ internal fun CustomModelScreen(
     onBack: () -> Unit,
     onSaved: () -> Unit,
 ) {
-    var apiKey by rememberSaveable { mutableStateOf(settings.apiKey) }
+    var apiKey by remember { mutableStateOf(settings.apiKey) }
     var baseUrl by rememberSaveable { mutableStateOf(settings.baseUrl) }
     var modelId by rememberSaveable { mutableStateOf(settings.modelId) }
     var reasoningEffort by rememberSaveable { mutableStateOf(settings.reasoningEffort) }
     var keyVisible by rememberSaveable { mutableStateOf(false) }
-    val canSave = baseUrl.isNotBlank() && modelId.isNotBlank()
+    val scope = rememberCoroutineScope()
+    var saving by remember { mutableStateOf(false) }
+    var saveFailed by remember { mutableStateOf(false) }
+    val validUrl = isValidAiBaseUrl(baseUrl)
+    val canSave = !saving && isAiConfigurationReady(
+        apiKey, AiConnectionConfiguration(baseUrl, modelId, reasoningEffort),
+    )
 
     PredictiveBackContainer(onBack = onBack) {
         Scaffold(
@@ -68,16 +81,28 @@ internal fun CustomModelScreen(
                 },
                 actions = {
                     TextButton(
-                        text = stringResource(R.string.save),
+                        text = stringResource(if (saving) R.string.saving else R.string.save),
                         enabled = canSave,
                         onClick = {
-                            settings.saveCustomConfiguration(
-                                apiKey = apiKey,
-                                baseUrl = baseUrl.trim(),
-                                modelId = modelId.trim(),
-                                reasoningEffort = reasoningEffort.trim(),
-                            )
-                            onSaved()
+                            saving = true
+                            saveFailed = false
+                            scope.launch {
+                                try {
+                                    settings.saveCustomConfiguration(
+                                        apiKey = apiKey.trim(),
+                                        baseUrl = baseUrl.trim(),
+                                        modelId = modelId.trim(),
+                                        reasoningEffort = reasoningEffort.trim(),
+                                    )
+                                    onSaved()
+                                } catch (cancelled: CancellationException) {
+                                    throw cancelled
+                                } catch (_: Exception) {
+                                    saveFailed = true
+                                } finally {
+                                    saving = false
+                                }
+                            }
                         },
                     )
                 },
@@ -150,6 +175,20 @@ internal fun CustomModelScreen(
                             ),
                             modifier = Modifier.fillMaxWidth(),
                         )
+                        if (baseUrl.isNotBlank() && !validUrl) {
+                            Text(
+                                text = stringResource(R.string.base_url_invalid),
+                                style = MiuixTheme.textStyles.footnote1,
+                                color = MiuixTheme.colorScheme.error,
+                            )
+                        }
+                        if (saveFailed) {
+                            Text(
+                                text = stringResource(R.string.custom_model_save_failed),
+                                style = MiuixTheme.textStyles.footnote1,
+                                color = MiuixTheme.colorScheme.error,
+                            )
+                        }
                         StableTextField(
                             value = modelId,
                             onValueChange = { modelId = it },

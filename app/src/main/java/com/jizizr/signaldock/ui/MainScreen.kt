@@ -429,6 +429,19 @@ private fun SettingsRootScreen(
                     )
                 }
             }
+            item(key = "ai") {
+                SmallTitle(stringResource(R.string.section_ai_service))
+                SectionCard {
+                    AiSettingsSection(
+                        settings = settings,
+                        allowSystemAccountImport = shizuku.isRoot,
+                        onOpenCustomModel = onOpenCustomModel,
+                        onMessage = { message ->
+                            scope.launch { snackbarHostState.showSnackbar(message) }
+                        },
+                    )
+                }
+            }
             item(key = "interface") {
                 SmallTitle(stringResource(R.string.section_interface))
                 SectionCard {
@@ -486,19 +499,6 @@ private fun SettingsRootScreen(
                                 ),
                                 ready = accessibilityConnected,
                             )
-                        },
-                    )
-                }
-            }
-            item(key = "ai") {
-                SmallTitle(stringResource(R.string.section_ai_service))
-                SectionCard {
-                    AiSettingsSection(
-                        settings = settings,
-                        allowSystemAccountImport = shizuku.isRoot,
-                        onOpenCustomModel = onOpenCustomModel,
-                        onMessage = { message ->
-                            scope.launch { snackbarHostState.showSnackbar(message) }
                         },
                     )
                 }

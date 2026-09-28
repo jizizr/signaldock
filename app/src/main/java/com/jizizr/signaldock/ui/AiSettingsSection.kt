@@ -2,7 +2,6 @@ package com.jizizr.signaldock.ui
 
 import android.content.Intent
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -13,7 +12,6 @@ import androidx.compose.ui.res.stringResource
 import com.jizizr.signaldock.R
 import com.jizizr.signaldock.XiaoAiMode
 import com.jizizr.signaldock.XiaomiCredentialImporter
-import com.jizizr.signaldock.XiaomiSessionStore
 import com.jizizr.signaldock.XiaomiWebLoginActivity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -47,8 +45,6 @@ internal fun AiSettingsSection(
         }
     }
     val presets = remember(settings.presetNames) { settings.presetNames.map { DropdownItem(text = it) } }
-    LaunchedEffect(settings.presetIndex) { settings.refreshXiaomiSession() }
-    LaunchedEffect(Unit) { XiaomiSessionStore.changes.collect { settings.refreshXiaomiSession() } }
     OverlaySpinnerPreference(
         items = presets,
         selectedIndex = settings.presetIndex,

@@ -222,6 +222,7 @@ dependencies {
     compileOnly(project(":hidden-api"))
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
+    implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.activity.compose)
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)
@@ -239,7 +240,7 @@ dependencies {
     implementation(libs.shizuku.provider)
     testImplementation(libs.junit)
     // Exercise the speech protocol on the JVM without installing a second app.
-    testImplementation("org.json:json:20250517")
+    testImplementation(libs.org.json)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(platform(libs.androidx.compose.bom))
