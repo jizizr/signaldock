@@ -28,7 +28,7 @@ SignalDock 是面向 HyperOS 超级岛的 Android 截图识别工具。点击控
 
 准备以下环境：
 
-- JDK 17 或更新版本
+- JDK 21 或更新版本
 - Android SDK Platform 37
 - Android NDK `27.2.12479018`
 - Rust stable
