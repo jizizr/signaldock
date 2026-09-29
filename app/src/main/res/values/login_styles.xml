@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Signaldock.XiaomiLogin" parent="Theme.Signaldock">
+        <item name="android:windowBackground">@color/login_background</item>
+        <item name="android:colorAccent">@color/login_accent</item>
+    </style>
+</resources>

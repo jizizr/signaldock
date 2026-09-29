@@ -1,10 +1,11 @@
 package com.jizizr.signaldock
 
 import android.annotation.SuppressLint
-import android.graphics.Color
+import android.content.res.Configuration
 import android.os.Bundle
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowInsets
 import android.view.WindowManager
 import android.webkit.CookieManager
 import android.webkit.WebResourceError
@@ -12,13 +13,14 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import android.widget.Button
-import android.widget.LinearLayout
-import android.widget.TextView
+import android.widget.FrameLayout
 import androidx.activity.ComponentActivity
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.doOnAttach
 import androidx.core.view.doOnLayout
 import androidx.lifecycle.lifecycleScope
+import com.jizizr.signaldock.XiaomiWebLoginView.Stage
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -27,8 +29,7 @@ import kotlinx.coroutines.withContext
 /** Official web login; only a session that passes actual FAST recognition is saved. */
 class XiaomiWebLoginActivity : ComponentActivity() {
     private lateinit var web: WebView
-    private lateinit var status: TextView
-    private lateinit var retry: Button
+    private lateinit var loginView: XiaomiWebLoginView
     private var preparing = false
     private var exchanging = false
     private var completed = false
@@ -37,34 +38,19 @@ class XiaomiWebLoginActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
-        val padding = (16 * resources.displayMetrics.density).toInt()
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(padding, padding, padding, padding)
-            setBackgroundColor(Color.WHITE)
+        val root = layoutInflater.inflate(
+            R.layout.activity_xiaomi_web_login, findViewById<ViewGroup>(android.R.id.content), false
+        ).apply {
             setOnApplyWindowInsetsListener { view, insets ->
-                val bars = insets.getInsets(android.view.WindowInsets.Type.systemBars())
-                view.setPadding(padding + bars.left, padding + bars.top, padding + bars.right, padding + bars.bottom)
+                val safeArea = insets.getInsets(
+                    WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout() or WindowInsets.Type.ime()
+                )
+                view.setPadding(safeArea.left, safeArea.top, safeArea.right, safeArea.bottom)
+                loginView.setKeyboardVisible(insets.isVisible(WindowInsets.Type.ime()))
                 insets
             }
         }
-        status = TextView(this).apply {
-            textSize = 16f
-            setTextColor(Color.BLACK)
-            contentDescription = "小爱网页登录状态"
-            text = "正在检查网页登录适配…"
-        }
-        val close = Button(this).apply { text = "返回信岛"; setOnClickListener { finish() } }
-        retry = Button(this).apply {
-            text = "重试"
-            visibility = View.GONE
-            setOnClickListener { prepareLogin() }
-        }
-        root.addView(status)
-        val actions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        actions.addView(close, LinearLayout.LayoutParams(0, -2, 1f))
-        actions.addView(retry, LinearLayout.LayoutParams(0, -2, 1f))
-        root.addView(actions)
+        loginView = XiaomiWebLoginView(root, onRetry = ::prepareLogin, onClose = ::finish)
         web = WebView(this).apply {
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
@@ -79,14 +65,15 @@ class XiaomiWebLoginActivity : ComponentActivity() {
                     val allowed = isXiaomiLoginUrlAllowed(request.url.toString())
                     if (!allowed) {
                         tryExchange()
-                        if (!exchanging && !completed) status.text = "此登录跳转暂不支持，请留在小米官方页面完成登录"
+                        if (!exchanging && !completed && loginView.stage != Stage.FAILED) {
+                            loginView.show(Stage.READY, getString(R.string.login_unsupported_redirect))
+                        }
                     }
                     return !allowed
                 }
                 override fun onPageCommitVisible(view: WebView, url: String) {
-                    if (!exchanging && !completed && isXiaomiLoginUrlAllowed(url)) {
-                        status.text = LOGIN_INSTRUCTIONS
-                        retry.visibility = View.GONE
+                    if (!exchanging && !completed && loginView.stage != Stage.FAILED && isXiaomiLoginUrlAllowed(url)) {
+                        loginView.show(Stage.READY)
                         AppLog.i("XiaomiWebLogin", "WEB_LOGIN_VISIBLE viewport=${view.width}x${view.height}")
                     }
                 }
@@ -97,8 +84,7 @@ class XiaomiWebLoginActivity : ComponentActivity() {
 
                 override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
                     if (request.isForMainFrame && !exchanging && !completed) {
-                        status.text = "登录页面加载失败，请检查网络后重试"
-                        retry.visibility = View.VISIBLE
+                        loginView.show(Stage.FAILED, getString(R.string.login_network_error))
                         AppLog.w("XiaomiWebLogin", "Web login load failed: code=${error.errorCode}")
                     }
                 }
@@ -107,8 +93,15 @@ class XiaomiWebLoginActivity : ComponentActivity() {
         // Keep the browser attached to a native parent for its entire Activity lifetime.
         // Do not let a conditional Compose mount race with page initialization:
         // both loading and restoration wait for attachment and a nonzero viewport.
-        root.addView(web, LinearLayout.LayoutParams(-1, 0, 1f))
+        root.findViewById<FrameLayout>(R.id.login_browser).addView(
+            web, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+        )
         setContentView(root)
+        val dark = resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES
+        WindowCompat.getInsetsController(window, root).apply {
+            isAppearanceLightStatusBars = !dark
+            isAppearanceLightNavigationBars = !dark
+        }
         root.requestApplyInsets()
         if (savedInstanceState == null) XiaomiWebLoginCoordinator.reset()
         lifecycleScope.launch {
@@ -118,22 +111,20 @@ class XiaomiWebLoginActivity : ComponentActivity() {
                     LoginVerificationRunner.State.Running -> {
                         exchanging = true
                         web.visibility = View.INVISIBLE
-                        retry.visibility = View.GONE
-                        status.text = "登录成功，正在验证识别能力。你可以返回信岛，验证通过后会自动保存连接。"
+                        loginView.show(Stage.VERIFYING)
+                        WindowCompat.getInsetsController(window, root).hide(WindowInsetsCompat.Type.ime())
                     }
                     LoginVerificationRunner.State.Success -> {
                         exchanging = false
                         completed = true
                         web.visibility = View.INVISIBLE
-                        retry.visibility = View.GONE
-                        status.text = "连接已保存，可使用取餐码识别和快速模式，无需 Root。专家模式仍需单独授权。"
+                        loginView.show(Stage.SUCCESS)
                     }
                     is LoginVerificationRunner.State.Failed -> {
                         exchanging = false
                         completed = true
                         web.visibility = View.INVISIBLE
-                        retry.visibility = View.VISIBLE
-                        status.text = state.message
+                        loginView.show(Stage.FAILED, state.message)
                     }
                 }
             }
@@ -142,7 +133,7 @@ class XiaomiWebLoginActivity : ComponentActivity() {
         if (savedInstanceState != null) {
             withBrowserViewport {
                 if (web.restoreState(savedInstanceState) != null) {
-                    status.text = LOGIN_INSTRUCTIONS
+                    loginView.show(Stage.READY)
                 } else {
                     prepareLogin()
                 }
@@ -156,13 +147,12 @@ class XiaomiWebLoginActivity : ComponentActivity() {
         if (preparing || exchanging || isFinishing || isDestroyed) return
         preparing = true
         completed = false
-        retry.visibility = View.GONE
-        status.text = "正在检查网页登录适配…"
+        loginView.show(Stage.PREPARING)
         XiaomiWebLoginCoordinator.reset()
         lifecycleScope.launch {
             try {
                 withContext(Dispatchers.IO) { XiaomiPassportClient.checkSupported(applicationContext) }
-                status.text = "正在加载小米官方登录页…"
+                loginView.show(Stage.LOADING)
                 AppLog.i("XiaomiWebLogin", "WEB_LOGIN_READY")
                 CookieManager.getInstance().removeAllCookies {
                     withBrowserViewport {
@@ -174,8 +164,7 @@ class XiaomiWebLoginActivity : ComponentActivity() {
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
-                status.text = "当前小爱版本的网页登录适配检查未通过，原有连接未改变"
-                retry.visibility = View.VISIBLE
+                loginView.show(Stage.FAILED, getString(R.string.login_config_error))
                 AppLog.w("XiaomiWebLogin", "Web login configuration failed: ${error.javaClass.simpleName}")
             } finally {
                 preparing = false
@@ -219,9 +208,5 @@ class XiaomiWebLoginActivity : ComponentActivity() {
         web.destroy()
         if (isFinishing) clearWebCookies()
         super.onDestroy()
-    }
-
-    private companion object {
-        const val LOGIN_INSTRUCTIONS = "请在下方小米官方页面登录。登录后将使用内置测试图验证识别能力，验证通过后保存连接。"
     }
 }

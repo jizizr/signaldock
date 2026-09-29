@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="login_title">小米账号登录</string>
+    <string name="login_back">返回信岛</string>
+    <string name="login_official_title">小米官方登录</string>
+    <string name="login_instructions">登录后自动验证并保存连接，无需 Root</string>
+    <string name="login_loading">正在加载小米官方登录页…</string>
+    <string name="login_preparing_title">准备登录</string>
+    <string name="login_preparing_body">正在检查当前小爱版本的网页登录适配</string>
+    <string name="login_verifying_title">正在验证连接</string>
+    <string name="login_verifying_body">登录成功，正在使用内置测试图验证识别能力。你可以返回信岛，验证通过后会自动保存连接。</string>
+    <string name="login_success_title">连接成功</string>
+    <string name="login_success_body">连接已保存，取餐码识别和快速模式已可使用，无需 Root。</string>
+    <string name="login_success_note">专家模式仍需单独授权</string>
+    <string name="login_failed_title">暂时无法连接</string>
+    <string name="login_retry">重新尝试</string>
+    <string name="login_done">完成</string>
+    <string name="login_network_error">登录页面加载失败，请检查网络后重试。</string>
+    <string name="login_config_error">当前小爱版本的网页登录适配检查未通过，原有连接未改变。</string>
+    <string name="login_unsupported_redirect">此登录跳转暂不支持，请留在小米官方页面完成登录。</string>
+</resources>

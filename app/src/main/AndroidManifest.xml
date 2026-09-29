@@ -40,7 +40,11 @@
         android:theme="@style/Theme.Signaldock">
 
         <!--  主 Activity  -->
-        <activity android:name=".XiaomiWebLoginActivity" android:exported="false" />
+        <activity
+            android:name=".XiaomiWebLoginActivity"
+            android:exported="false"
+            android:theme="@style/Theme.Signaldock.XiaomiLogin"
+            android:windowSoftInputMode="adjustResize" />
         <activity
             android:name=".MainActivity"
             android:exported="true"
