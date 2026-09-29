@@ -148,6 +148,7 @@ android {
         )
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        testProguardFiles("proguard-android-test.pro")
 
         // Only build ABIs we have Rust targets for
         ndk {
@@ -155,6 +156,9 @@ android {
             abiFilters += listOf("arm64-v8a")
         }
     }
+
+    // Run device regressions against the signed, minified production variant when requested.
+    testBuildType = providers.gradleProperty("androidTestBuildType").getOrElse("debug")
 
     // Register Rust output directory — use a resolved string path (not a Provider) to satisfy
     // AGP's restriction against adding Provider instances to the SourceSet API.

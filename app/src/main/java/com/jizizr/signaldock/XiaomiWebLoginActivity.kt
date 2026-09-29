@@ -1,7 +1,10 @@
 package com.jizizr.signaldock
 
 import android.annotation.SuppressLint
+import android.graphics.Color
 import android.os.Bundle
+import android.view.View
+import android.view.ViewGroup
 import android.view.WindowManager
 import android.webkit.CookieManager
 import android.webkit.WebResourceError
@@ -9,51 +12,59 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.Button
+import android.widget.LinearLayout
+import android.widget.TextView
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.setContent
-import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.view.doOnAttach
+import androidx.core.view.doOnLayout
 import androidx.lifecycle.lifecycleScope
-import com.jizizr.signaldock.ui.theme.SignaldockTheme
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import top.yukonga.miuix.kmp.basic.Icon
-import top.yukonga.miuix.kmp.basic.IconButton
-import top.yukonga.miuix.kmp.basic.Scaffold
-import top.yukonga.miuix.kmp.basic.SmallTopAppBar
-import top.yukonga.miuix.kmp.basic.Text
-import top.yukonga.miuix.kmp.basic.TextButton
-import top.yukonga.miuix.kmp.icon.MiuixIcons
-import top.yukonga.miuix.kmp.icon.extended.Back
-import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 /** Official web login; only a session that passes actual FAST recognition is saved. */
 class XiaomiWebLoginActivity : ComponentActivity() {
     private lateinit var web: WebView
-    private var statusText by mutableStateOf("正在检查网页登录适配…")
-    private var webVisible by mutableStateOf(false)
-    private var retryAvailable by mutableStateOf(false)
+    private lateinit var status: TextView
+    private lateinit var retry: Button
+    private var preparing = false
     private var exchanging = false
     private var completed = false
-    private var preparing = false
 
     @SuppressLint("SetJavaScriptEnabled") // Xiaomi's first-party login page requires JavaScript.
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
-        window.isNavigationBarContrastEnforced = false
         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        val padding = (16 * resources.displayMetrics.density).toInt()
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(padding, padding, padding, padding)
+            setBackgroundColor(Color.WHITE)
+            setOnApplyWindowInsetsListener { view, insets ->
+                val bars = insets.getInsets(android.view.WindowInsets.Type.systemBars())
+                view.setPadding(padding + bars.left, padding + bars.top, padding + bars.right, padding + bars.bottom)
+                insets
+            }
+        }
+        status = TextView(this).apply {
+            textSize = 16f
+            setTextColor(Color.BLACK)
+            contentDescription = "小爱网页登录状态"
+            text = "正在检查网页登录适配…"
+        }
+        val close = Button(this).apply { text = "返回信岛"; setOnClickListener { finish() } }
+        retry = Button(this).apply {
+            text = "重试"
+            visibility = View.GONE
+            setOnClickListener { prepareLogin() }
+        }
+        root.addView(status)
+        val actions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        actions.addView(close, LinearLayout.LayoutParams(0, -2, 1f))
+        actions.addView(retry, LinearLayout.LayoutParams(0, -2, 1f))
+        root.addView(actions)
         web = WebView(this).apply {
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
@@ -68,11 +79,16 @@ class XiaomiWebLoginActivity : ComponentActivity() {
                     val allowed = isXiaomiLoginUrlAllowed(request.url.toString())
                     if (!allowed) {
                         tryExchange()
-                        if (!exchanging && !completed) {
-                            statusText = "此登录跳转暂不支持，请留在小米官方页面完成登录"
-                        }
+                        if (!exchanging && !completed) status.text = "此登录跳转暂不支持，请留在小米官方页面完成登录"
                     }
                     return !allowed
+                }
+                override fun onPageCommitVisible(view: WebView, url: String) {
+                    if (!exchanging && !completed && isXiaomiLoginUrlAllowed(url)) {
+                        status.text = LOGIN_INSTRUCTIONS
+                        retry.visibility = View.GONE
+                        AppLog.i("XiaomiWebLogin", "WEB_LOGIN_VISIBLE viewport=${view.width}x${view.height}")
+                    }
                 }
 
                 override fun onPageFinished(view: WebView, url: String) {
@@ -81,49 +97,19 @@ class XiaomiWebLoginActivity : ComponentActivity() {
 
                 override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
                     if (request.isForMainFrame && !exchanging && !completed) {
-                        statusText = "登录页面加载失败，请检查网络后重试"
-                        retryAvailable = true
+                        status.text = "登录页面加载失败，请检查网络后重试"
+                        retry.visibility = View.VISIBLE
+                        AppLog.w("XiaomiWebLogin", "Web login load failed: code=${error.errorCode}")
                     }
                 }
             }
         }
-        setContent {
-            SignaldockTheme {
-                Scaffold(topBar = {
-                    SmallTopAppBar(
-                        title = "小米账号登录",
-                        navigationIcon = {
-                            IconButton(onClick = ::finish) {
-                                Icon(MiuixIcons.Back, contentDescription = getString(R.string.back))
-                            }
-                        },
-                        actions = {
-                            if (retryAvailable) {
-                                TextButton(text = "重试", onClick = { prepareLogin() })
-                            }
-                        },
-                    )
-                }) { padding ->
-                    Column(Modifier.fillMaxSize().padding(padding)) {
-                        Text(
-                            text = statusText,
-                            style = MiuixTheme.textStyles.body2,
-                            color = MiuixTheme.colorScheme.onSurface,
-                            modifier = Modifier.fillMaxWidth().padding(20.dp),
-                        )
-                        if (webVisible) {
-                            AndroidView(factory = { web }, modifier = Modifier.fillMaxWidth().weight(1f))
-                        } else if (completed) {
-                            TextButton(
-                                text = "返回信岛",
-                                onClick = ::finish,
-                                modifier = Modifier.padding(horizontal = 20.dp),
-                            )
-                        }
-                    }
-                }
-            }
-        }
+        // Keep the browser attached to a native parent for its entire Activity lifetime.
+        // Do not let a conditional Compose mount race with page initialization:
+        // both loading and restoration wait for attachment and a nonzero viewport.
+        root.addView(web, LinearLayout.LayoutParams(-1, 0, 1f))
+        setContentView(root)
+        root.requestApplyInsets()
         if (savedInstanceState == null) XiaomiWebLoginCoordinator.reset()
         lifecycleScope.launch {
             XiaomiWebLoginCoordinator.state.collect { state ->
@@ -131,62 +117,77 @@ class XiaomiWebLoginActivity : ComponentActivity() {
                     LoginVerificationRunner.State.Idle -> Unit
                     LoginVerificationRunner.State.Running -> {
                         exchanging = true
-                        webVisible = false
-                        retryAvailable = false
-                        statusText = "登录成功，正在验证识别能力。你可以返回信岛，验证通过后会自动保存连接。"
+                        web.visibility = View.INVISIBLE
+                        retry.visibility = View.GONE
+                        status.text = "登录成功，正在验证识别能力。你可以返回信岛，验证通过后会自动保存连接。"
                     }
                     LoginVerificationRunner.State.Success -> {
                         exchanging = false
                         completed = true
-                        webVisible = false
-                        retryAvailable = false
-                        statusText = "连接已保存，可使用取餐码识别和快速模式，无需 Root。专家模式仍需单独授权。"
+                        web.visibility = View.INVISIBLE
+                        retry.visibility = View.GONE
+                        status.text = "连接已保存，可使用取餐码识别和快速模式，无需 Root。专家模式仍需单独授权。"
                     }
                     is LoginVerificationRunner.State.Failed -> {
                         exchanging = false
                         completed = true
-                        webVisible = false
-                        retryAvailable = true
-                        statusText = state.message
+                        web.visibility = View.INVISIBLE
+                        retry.visibility = View.VISIBLE
+                        status.text = state.message
                     }
                 }
             }
         }
         if (XiaomiWebLoginCoordinator.state.value != LoginVerificationRunner.State.Idle) return
-        if (savedInstanceState != null && web.restoreState(savedInstanceState) != null) {
-            webVisible = true
-            statusText = LOGIN_INSTRUCTIONS
+        if (savedInstanceState != null) {
+            withBrowserViewport {
+                if (web.restoreState(savedInstanceState) != null) {
+                    status.text = LOGIN_INSTRUCTIONS
+                } else {
+                    prepareLogin()
+                }
+            }
         } else {
             prepareLogin()
         }
     }
 
     private fun prepareLogin() {
-        if (preparing || exchanging) return
+        if (preparing || exchanging || isFinishing || isDestroyed) return
         preparing = true
         completed = false
-        webVisible = false
-        retryAvailable = false
+        retry.visibility = View.GONE
+        status.text = "正在检查网页登录适配…"
         XiaomiWebLoginCoordinator.reset()
-        statusText = "正在检查网页登录适配…"
         lifecycleScope.launch {
             try {
                 withContext(Dispatchers.IO) { XiaomiPassportClient.checkSupported(applicationContext) }
-                statusText = LOGIN_INSTRUCTIONS
+                status.text = "正在加载小米官方登录页…"
                 AppLog.i("XiaomiWebLogin", "WEB_LOGIN_READY")
                 CookieManager.getInstance().removeAllCookies {
-                    if (!isDestroyed && !isFinishing) {
-                        webVisible = true
+                    withBrowserViewport {
+                        web.visibility = View.VISIBLE
+                        AppLog.i("XiaomiWebLogin", "WEB_LOGIN_LOAD attached=${web.isAttachedToWindow} viewport=${web.width}x${web.height}")
                         web.loadUrl(XiaomiPassportClient.LOGIN_URL)
                     }
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled
-            } catch (_: Exception) {
-                statusText = "当前小爱版本的网页登录适配检查未通过，原有连接未改变"
-                retryAvailable = true
+            } catch (error: Exception) {
+                status.text = "当前小爱版本的网页登录适配检查未通过，原有连接未改变"
+                retry.visibility = View.VISIBLE
+                AppLog.w("XiaomiWebLogin", "Web login configuration failed: ${error.javaClass.simpleName}")
             } finally {
                 preparing = false
+            }
+        }
+    }
+
+    private fun withBrowserViewport(action: () -> Unit) {
+        if (isDestroyed || isFinishing) return
+        web.doOnAttach {
+            web.doOnLayout {
+                if (!isDestroyed && !isFinishing && web.width > 0 && web.height > 0) action()
             }
         }
     }
@@ -194,12 +195,10 @@ class XiaomiWebLoginActivity : ComponentActivity() {
     private fun tryExchange() {
         if (exchanging || completed || isFinishing) return
         val cookies = CookieManager.getInstance()
-        val credential = xiaomiWebServiceCredential(
-            cookies.getCookie("https://account.ai.xiaomi.com"),
-            cookies.getCookie("https://account.xiaomi.com"),
-        ) ?: return
+        val credential = xiaomiWebServiceCredential(cookies.getCookie("https://account.ai.xiaomi.com"),
+            cookies.getCookie("https://account.xiaomi.com")) ?: return
         exchanging = true
-        webVisible = false
+        web.visibility = View.INVISIBLE
         XiaomiWebLoginCoordinator.begin(applicationContext, credential)
         clearWebCookies()
     }
@@ -210,12 +209,13 @@ class XiaomiWebLoginActivity : ComponentActivity() {
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
-        if (webVisible && !exchanging) web.saveState(outState)
+        if (web.isShown && !exchanging) web.saveState(outState)
         super.onSaveInstanceState(outState)
     }
 
     override fun onDestroy() {
         web.stopLoading()
+        (web.parent as? ViewGroup)?.removeView(web)
         web.destroy()
         if (isFinishing) clearWebCookies()
         super.onDestroy()

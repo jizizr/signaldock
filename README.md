@@ -71,6 +71,14 @@ cargo test
 cargo clippy --all-targets --all-features -- -D warnings
 ```
 
+网页登录页面的真机回归使用已签名、已压缩的 Release 构建，检查冷启动、Activity 重建和再次打开时的可见输入框。测试只读取页面尺寸与输入框数量，不填写账号、密码或验证码，也不修改已保存的识别会话。需要已连接的手机、受支持的小爱版本及网络：
+
+```bash
+./gradlew -PandroidTestBuildType=release \
+  -Pandroid.testInstrumentationRunnerArguments.class=com.jizizr.signaldock.XiaomiWebLoginTest \
+  :app:connectedReleaseAndroidTest
+```
+
 ## 隐私说明
 
 截图会发送到用户选择的 AI 服务商。应用不会把 API Key 或小米会话写入普通明文偏好；识别结果和模型原始响应也不会写入应用日志。发布前仍应检查暂存文件，确保没有本机配置、账号信息、截图、日志或签名文件。
